@@ -1,3 +1,0 @@
-﻿run_id,date,turn,subturn,agent_id,decision_date,market_features_date,news_start_date,news_start_time,news_max_date,news_end_time,execution_date,information_mode,stock_code,action,quantity,reason
-simulation_20260714_234714_810678_17012,2026-02-27,1,am,A007,2026-02-27,2026-02-26,2026-02-26,15:30,2026-02-27,08:59,2026-02-27,pre_close_cutoff,005930,buy,238,"전일 대비 3.7% 하락으로 안전마진 확보 및 밸류에이션 부담 완화. 기관 매수 지지와 관세 리스크 감소로 중장기 상승 기대감 유지. 과거 성과 부진으로 분할 진입 원칙을 따르되, 집중 투자 성향에 따라 단일 거래 최대 한도 내에서 진입."
-simulation_20260714_234714_810678_17012,2026-02-27,2,pm,A007,2026-02-27,2026-02-27,2026-02-27,08:59,2026-02-27,15:30,2026-02-27,pre_close_cutoff,005930,buy,115,"내재가치 저평가 및 구조적 우위 (메모리 부족, 프리미엄 점유율) 에 따른 매수 기회 확대 판단. 기술주 심리 위축은 단기적이며 중장기 상승 추세 유지."

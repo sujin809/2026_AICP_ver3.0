@@ -1,3 +1,0 @@
-﻿run_id,date,turn,subturn,agent_id,decision_date,market_features_date,news_start_date,news_start_time,news_max_date,news_end_time,execution_date,information_mode,stock_code,action,quantity,reason
-simulation_20260714_233348_148229_13392,2026-02-27,1,am,A002,2026-02-27,2026-02-26,2026-02-26,15:30,2026-02-27,08:59,2026-02-27,pre_close_cutoff,005930,buy,200,"전일 대비 주가 하락 (218,000 원 → 210,000 원) 으로 진입 가격 개선, 중장기 AI 수요와 환율 개선 기대감. 밸류에이션 우려로 전량 매수보다는 50% 이내 제한적 매수."
-simulation_20260714_233348_148229_13392,2026-02-27,1,am,A003,2026-02-27,2026-02-26,2026-02-26,15:30,2026-02-27,08:59,2026-02-27,pre_close_cutoff,005930,buy,238,"가치평가 지표 저평가 구간이며, AI 수요 호재와 기관 매도 중단 등 긍정적 뉴스가 확인되어 매수 기회로 판단합니다. 현금의 50% 한도 내에서 집중 투자 성향을 반영하여 진입합니다."

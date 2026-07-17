@@ -20,6 +20,7 @@ class SimulationLogger:
         run_id: str | None = None,
         metadata: dict[str, Any] | None = None,
         overwrite_root: bool = False,
+        append_existing: bool = False,
     ) -> None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         self.run_id = run_id or f"simulation_{timestamp}_{os.getpid()}"
@@ -28,7 +29,7 @@ class SimulationLogger:
             shutil.rmtree(root)
         root.mkdir(parents=True, exist_ok=True)
         self.run_dir = root / self.run_id
-        if self.run_dir.exists():
+        if self.run_dir.exists() and not append_existing:
             shutil.rmtree(self.run_dir)
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self._update_current_pointer(root)
@@ -170,16 +171,17 @@ class SimulationLogger:
             "best_posts_json",
             "posts_read_json",
         ]
-        self._init_csv(self.run_dir / "agent_turns.csv", self._agent_csv_fields)
-        self._init_csv(self.run_dir / "submitted_orders.csv", self._orders_csv_fields)
-        self._init_csv(self.run_dir / "exchange_fills.csv", self._fills_csv_fields)
-        self._init_csv(self.run_dir / "daily_exchange_summary.csv", self._daily_csv_fields)
-        self._init_csv(self.run_dir / "community_posts.csv", self._community_posts_csv_fields)
-        self._init_csv(self.run_dir / "community_selection_inputs.csv", self._community_selection_csv_fields)
-        self._init_csv(self.run_dir / "community_interactions.csv", self._community_interactions_csv_fields)
-        self._init_csv(self.run_dir / "community_best_posts.csv", self._community_best_csv_fields)
-        self._init_csv(self.run_dir / "community_logs.csv", self._community_logs_csv_fields)
-        self.write_json("run_metadata.json", {"run_id": self.run_id, "created_at": timestamp, **(metadata or {})})
+        self._init_csv(self.run_dir / "agent_turns.csv", self._agent_csv_fields, append_existing=append_existing)
+        self._init_csv(self.run_dir / "submitted_orders.csv", self._orders_csv_fields, append_existing=append_existing)
+        self._init_csv(self.run_dir / "exchange_fills.csv", self._fills_csv_fields, append_existing=append_existing)
+        self._init_csv(self.run_dir / "daily_exchange_summary.csv", self._daily_csv_fields, append_existing=append_existing)
+        self._init_csv(self.run_dir / "community_posts.csv", self._community_posts_csv_fields, append_existing=append_existing)
+        self._init_csv(self.run_dir / "community_selection_inputs.csv", self._community_selection_csv_fields, append_existing=append_existing)
+        self._init_csv(self.run_dir / "community_interactions.csv", self._community_interactions_csv_fields, append_existing=append_existing)
+        self._init_csv(self.run_dir / "community_best_posts.csv", self._community_best_csv_fields, append_existing=append_existing)
+        self._init_csv(self.run_dir / "community_logs.csv", self._community_logs_csv_fields, append_existing=append_existing)
+        if not append_existing or not (self.run_dir / "run_metadata.json").exists():
+            self.write_json("run_metadata.json", {"run_id": self.run_id, "created_at": timestamp, **(metadata or {})})
 
     def log_agent_turn(
         self,
@@ -574,7 +576,9 @@ class SimulationLogger:
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writerow({field: row.get(field, "") for field in fieldnames})
 
-    def _init_csv(self, path: Path, fieldnames: list[str]) -> None:
+    def _init_csv(self, path: Path, fieldnames: list[str], *, append_existing: bool = False) -> None:
+        if append_existing and path.exists() and path.stat().st_size > 0:
+            return
         with path.open("w", encoding="utf-8-sig", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()

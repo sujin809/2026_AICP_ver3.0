@@ -1,0 +1,8 @@
+{
+  "run_id": "chunk_003_2026-03-16_2026-03-20",
+  "agent_count": 30,
+  "date_count": 5,
+  "information_mode": "pre_close_cutoff",
+  "decision_space": "buy_sell_only",
+  "log_dir": "outputs/logs/simulation_20260715_bearish_30_20260227_20260601/chunks/chunk_003_2026-03-16_2026-03-20"
+}

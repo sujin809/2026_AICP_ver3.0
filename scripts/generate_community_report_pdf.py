@@ -150,6 +150,19 @@ def main() -> None:
     order_rows = read_csv(run_dir / "submitted_orders.csv")
     fill_rows = read_csv(run_dir / "exchange_fills.csv")
 
+    # Chunked runs omit the legacy agent list from aggregate metadata.
+    agent_ids = list(meta.get("agent_ids") or [])
+    if not agent_ids:
+        agent_ids = sorted(
+            {
+                str((row.get("agent") or {}).get("agent_id"))
+                for row in agent_turns
+                if (row.get("agent") or {}).get("agent_id")
+            }
+        )
+    meta["agent_ids"] = agent_ids
+    meta.setdefault("agent_count", len(agent_ids))
+
     posts_by_date = defaultdict(list)
     for row in posts:
         posts_by_date[row["date"]].append(row)
@@ -175,7 +188,7 @@ def main() -> None:
 
     final_states = latest_states(portfolio_updates)
     representative_agents, representative_reasons = pick_representative_agents(
-        list(meta.get("agent_ids") or []),
+        agent_ids,
         final_states=final_states,
         order_rows=order_rows,
         fill_rows=fill_rows,

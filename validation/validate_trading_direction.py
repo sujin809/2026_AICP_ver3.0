@@ -55,9 +55,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--stock-code", default="005930")
     parser.add_argument(
+        "--start-date",
+        type=parse_date,
+        default=None,
+        help="Optional inclusive validation start date (YYYY-MM-DD).",
+    )
+    parser.add_argument(
+        "--end-date",
+        type=parse_date,
+        default=None,
+        help="Optional inclusive validation end date (YYYY-MM-DD).",
+    )
+    parser.add_argument(
         "--skip-initial-days",
         type=int,
-        default=3,
+        default=5,
         help="Exclude the first N overlapping trading days from validation metrics and charts.",
     )
     return parser.parse_args()
@@ -444,6 +456,20 @@ def skip_initial_rows(rows: list[dict[str, Any]], days: int) -> list[dict[str, A
     return rows[days:]
 
 
+def filter_date_range(
+    rows: list[dict[str, Any]],
+    start_date: str | None,
+    end_date: str | None,
+) -> list[dict[str, Any]]:
+    """Keep rows inside the optional inclusive validation date range."""
+    return [
+        row
+        for row in rows
+        if (start_date is None or row["date"] >= start_date)
+        and (end_date is None or row["date"] <= end_date)
+    ]
+
+
 def summarize_dimension(rows: list[dict[str, Any]], metric_key: str) -> dict[str, Any]:
     llm_values = [num(row["llm_net"]) for row in rows]
     actual_individuals = [num(row["Individuals"]) for row in rows]
@@ -551,7 +577,13 @@ class NormalizedLineChart(Flowable):
         c.setStrokeColor(colors.HexColor("#94a3b8"))
         c.setLineWidth(0.3)
         c.setFont("Korean", 5.4)
-        for idx, date in enumerate(self.dates):
+        tick_count = min(10, len(self.dates))
+        tick_indices = {
+            round(index * (len(self.dates) - 1) / max(1, tick_count - 1))
+            for index in range(tick_count)
+        }
+        for idx in sorted(tick_indices):
+            date = self.dates[idx]
             x = x0 + (w * idx / max(1, len(self.dates) - 1))
             c.line(x, y0, x, y0 - 1.5 * mm)
             c.saveState()
@@ -730,7 +762,15 @@ def build_report(
             styles["KBody"],
         )
     )
+    validation_start = summary.get("validation_start_date") or "전체"
+    validation_end = summary.get("validation_end_date") or "전체"
     skipped_days = int(summary.get("skip_initial_days") or 0)
+    story.append(
+        para(
+            f"검증 구간: {validation_start} ~ {validation_end} / 초기 제외 거래일: {skipped_days}일",
+            styles["KBody"],
+        )
+    )
     if skipped_days:
         story.append(
             para(
@@ -900,6 +940,8 @@ def main() -> None:
 
         value_rows = build_comparison_rows(label="value", actual=actual_value, simulation=simulation)
         volume_rows = build_comparison_rows(label="volume", actual=actual_volume, simulation=simulation)
+        value_rows = filter_date_range(value_rows, args.start_date, args.end_date)
+        volume_rows = filter_date_range(volume_rows, args.start_date, args.end_date)
         skipped_value_dates = [row["date"] for row in value_rows[: args.skip_initial_days]]
         skipped_volume_dates = [row["date"] for row in volume_rows[: args.skip_initial_days]]
         value_rows = skip_initial_rows(value_rows, args.skip_initial_days)
@@ -925,6 +967,8 @@ def main() -> None:
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "information_mode": run_metadata.get("information_mode"),
             "limit_only_orders": run_metadata.get("limit_only_orders"),
+            "validation_start_date": args.start_date,
+            "validation_end_date": args.end_date,
             "skip_initial_days": args.skip_initial_days,
             "skipped_value_dates": skipped_value_dates,
             "skipped_volume_dates": skipped_volume_dates,

@@ -1,318 +1,142 @@
 # TwinMarket Korea
 
-삼성전자(`005930`)를 대상으로 LLM 기반 개인 투자자 에이전트들이 뉴스, 시장 정보, 포트폴리오, 커뮤니티 반응을 읽고 매수/매도 주문을 제출하는 시장 시뮬레이션 프로젝트입니다.
-
-현재 코드의 기준 흐름은 다음과 같습니다.
+삼성전자(`005930`)를 대상으로 LLM 기반 투자자 에이전트가 뉴스·시장 정보·포트폴리오·커뮤니티 정보를 바탕으로 매수 또는 매도 주문을 내는 시장 시뮬레이션입니다.
 
 ```text
-원천 데이터 준비
-  -> 100명 페르소나 선발
-  -> 뉴스 전처리 및 일별 뉴스 선택
-  -> 주가 데이터 DB 적재
-  -> 초기 포트폴리오와 초기 belief 생성
-  -> am/pm 의사결정 시뮬레이션
-  -> 로그, PDF 리포트, 실제 개인 투자자 순거래 방향 검증
+시장/뉴스 데이터 준비 → 100명 페르소나 구성 → 초기 상태 생성
+→ 거래일별 am·pm 의사결정 및 체결 → 로그·리포트·실제 거래 방향 검증
 ```
 
 ## 문서
 
-| 문서 | 역할 |
+| 문서 | 용도 |
 | --- | --- |
-| `README.md` | 설치, 데이터 준비, 실행, 검증 방법 |
-| `ARCHITECTURE.md` | 현재 코드 구조와 주요 설계 결정 |
+| `ARCHITECTURE.md` | 현재 실행 구조와 데이터 흐름 |
 | `Code_Status.md` | 유지해야 할 핵심 구현 결정 |
-| `fake_news_injection_experiment.md` | 가짜뉴스 주입 실험 설계 |
-| `validation/README.md` | 실제 투자자 순거래 방향 검증 |
-| `News_Scraper/README.md` | 뉴스 수집 보조 스크립트 |
+| `Event_Fake_News_DB_Guide.md` | 이벤트·가짜뉴스 데이터와 주입 CSV 생성 |
+| `fake_news_injection_experiment.md` | 가짜뉴스 비교 실험 설계 |
+| `fake_news_phase_stimulus_review.md` | phase-review 자극의 검토 기준과 현황 |
+| `validation/README.md` | 실제 개인 투자자 거래 방향 검증 |
+| `News_Scraper/README.md` | 뉴스 수집 보조 도구 |
 
-## 디렉터리 구조
+`twinmarket_micro_behavior_research_plan.md`은 논문 작업용 별도 문서이며 이 운영 안내의 범위에 포함하지 않습니다.
 
-```text
-.
-├── config.py
-├── data/                         # 원천 데이터
-├── outputs/
-│   ├── sys_100.db                # 선발된 에이전트 DB
-│   ├── sim.db                    # 시뮬레이션 상태 DB
-│   ├── processed_news.csv        # 정제된 전체 뉴스
-│   ├── daily_news_selection.csv  # 일별 노출 뉴스 목록
-│   ├── logs/                     # 실행별 로그
-│   └── reports/                  # PDF 리포트
-├── prompts/                      # LLM 프롬프트
-├── scripts/                      # 단계별 실행 스크립트
-├── twinmarket_kr/                # 시뮬레이션 패키지
-├── validation/                   # 실제 투자자 순거래 방향 검증
-└── News_Scraper/                 # 뉴스 수집 보조 도구
-```
-
-## 환경 설정
+## 설치와 설정
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-LLM 호출은 OpenRouter API를 사용합니다. 프로젝트 루트에 `.env`를 만들고 값을 설정합니다.
+데이터 수집과 PDF 리포트에는 `yfinance`, `matplotlib`, `reportlab` 등 추가 패키지가 필요할 수 있습니다. LLM 실행 전에는 프로젝트 루트의 `.env`에 사용할 OpenRouter 설정을 명시합니다.
 
-```bash
+```dotenv
 OPENROUTER_API_KEY=...
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-OPENROUTER_MODEL=openai/gpt-4o
-OPENROUTER_COMMUNITY_MODEL=openai/gpt-4o-mini
+OPENROUTER_MODEL=...
+OPENROUTER_COMMUNITY_MODEL=...
 ```
 
-일부 데이터 수집/리포트 스크립트는 `pandas`, `yfinance`, `reportlab`, `matplotlib` 등 추가 패키지가 필요할 수 있습니다.
+모델은 실험 중 임의로 바꾸지 않습니다. 자세한 기준은 `API_MODEL_USAGE_NOTICE.md`를 따릅니다.
 
-## 데이터 준비
+## 기본 데이터 준비
 
-### 1. 시장 데이터 수집
+아래 순서는 새 환경에서 기본 상태를 만드는 순서입니다.
 
 ```bash
 python scripts/00_fetch_market_data.py
-```
-
-생성 파일:
-
-- `data/stock_data.csv`
-- `data/macro_data.csv`
-
-### 2. 100명 에이전트 구성
-
-```bash
 python scripts/01_build_persona.py
-```
-
-생성 파일:
-
-- `outputs/sys_100.db`
-- `outputs/persona_validation_report.json`
-
-### 3. 뉴스 전처리
-
-```bash
 python scripts/02_prepare_news.py --seed 2
-```
-
-생성 파일:
-
-- `outputs/processed_news.csv`
-- `outputs/daily_news_selection.csv`
-
-기본 일별 뉴스 선정 목표는 종목 5개, 섹터 3개, 경제 2개입니다. 시간대별 `am/pm` 5:5 배분은 보장하지 않습니다.
-
-### 4. 주가 데이터 DB 적재
-
-```bash
 python scripts/03_load_stock_data.py
-```
-
-`data/stock_data.csv`를 `outputs/sim.db`의 `StockData` 테이블에 적재합니다.
-
-### 5. 초기 포트폴리오 생성
-
-```bash
 python scripts/02_init_memory.py
-```
-
-`portfolio_state`의 `turn=0` 초기 상태를 생성합니다.
-
-### 6. 초기 belief 생성
-
-LLM 없이 템플릿 기반으로 생성:
-
-```bash
 python scripts/04_generate_initial_beliefs.py --offline
+python scripts/99_validate.py
 ```
 
-LLM으로 생성:
+LLM으로 초기 belief를 만들려면 마지막 전 단계에서 `--offline`을 뺍니다. 주요 입출력은 다음과 같습니다.
 
-```bash
-python scripts/04_generate_initial_beliefs.py
-```
+| 단계 | 입력 | 출력 |
+| --- | --- | --- |
+| 시장 데이터 | 외부 시세 | `data/stock_data.csv`, `data/macro_data.csv` |
+| 페르소나 | `data/sys_1000.csv` | `outputs/sys_100.db` |
+| 뉴스 전처리 | `data/samsung_news_raw.pkl` | `outputs/processed_news.csv`, `outputs/daily_news_selection.csv` |
+| 시장 DB 적재·초기화 | 위 산출물 | `outputs/sim.db` |
 
-## 시뮬레이션 실행
+`02_init_memory.py`는 `sim.db`의 초기 포트폴리오 상태를 만듭니다. 같은 DB로 새 실험을 시작할 때에는 기존 런타임 상태에 유의해야 합니다.
 
-대표 실행:
+## 시뮬레이션
 
 ```bash
 python scripts/05_run_simulation.py \
-  --max-agents 50 \
+  --max-agents 30 \
   --seed 2 \
   --start-date 2026-02-27 \
-  --end-date 2026-05-12 \
+  --end-date 2026-06-01 \
+  --community-mode off
 ```
 
 주요 옵션:
 
 | 옵션 | 설명 |
 | --- | --- |
-| `--max-agents` | 실행할 에이전트 수 |
-| `--max-days` | 실행할 거래일 수 |
-| `--start-date`, `--end-date` | 실행 기간 |
-| `--seed` | 샘플 재현용 seed |
-| `--information-mode` | 정보 컷오프 방식 |
-| `--use-fake-news-injection` | injection 뉴스 CSV를 사용 |
-| `--fake-news-mode` | `on`이면 fake row 노출, `off`이면 `is_fake=true` row 숨김 |
-| `--no-logs` | 상세 로그 비활성화 |
+| `--max-agents`, `--max-days` | 에이전트 수와 거래일 수 제한 |
+| `--start-date`, `--end-date` | 실행 구간 |
+| `--seed` | 재현용 표본 seed |
+| `--information-mode` | `pre_close_cutoff`(기본), `prior_close`, `same_day` |
+| `--community-mode` | `on` 또는 `off` |
+| `--processed-news-csv`, `--daily-news-csv` | 런타임 뉴스 입력을 명시적으로 교체 |
+| `--sim-db` | 실험별 SQLite DB 경로 지정 |
+| `--no-logs` | 상세 실행 로그 비활성화 |
 
-`--information-mode`:
+기본 `pre_close_cutoff`에서 am은 전 거래일 15:30 이후부터 당일 08:59까지, pm은 당일 08:59 이후부터 15:30까지의 뉴스를 사용합니다. 주문은 `buy_sell_only`이며 am은 시가, pm은 종가로 체결됩니다.
 
-- `pre_close_cutoff`: 기본값. `am`은 전 거래일 15:30 이후부터 당일 08:59까지의 뉴스, `pm`은 당일 08:59 이후부터 15:30까지의 뉴스를 사용합니다.
-- `prior_close`: 전일 시장 데이터와 전일까지의 뉴스만 사용합니다.
-- `same_day`: 당일 시장 데이터와 당일 뉴스를 사용합니다.
-
-현재 주문 결정 공간은 `buy_sell_only`입니다.
-
-가짜뉴스 주입 CSV를 쓰면서 에이전트에게 가짜뉴스를 노출하려면:
+짧은 커뮤니티 점검은 다음과 같이 실행합니다.
 
 ```bash
-python scripts/05_run_simulation.py --use-fake-news-injection --fake-news-mode on
+python scripts/06_run_community_smoke_test.py --max-agents 3 --max-days 2
 ```
 
-같은 injection CSV를 쓰되 가짜뉴스 row를 숨기려면:
+## 가짜뉴스 주입 실험
+
+먼저 두 polarity의 주입용 CSV를 생성합니다.
 
 ```bash
-python scripts/05_run_simulation.py --use-fake-news-injection --fake-news-mode off
+python scripts/07_prepare_fake_news_injection.py --variant both
 ```
 
-`--use-fake-news-injection`만 지정하면 기존 동작과 같게 `--fake-news-mode on`으로 처리됩니다.
+이 명령은 `outputs/*_injection_bearish.csv`와 `outputs/*_injection_bullish.csv`를 만듭니다. phase-review 행도 기본으로 포함하며, `--approved-only`는 `final_approval=true` 행만 사용합니다.
 
-## 현재 주요 실행 현황
+```bash
+# bearish 자극 노출
+python scripts/05_run_simulation.py \
+  --use-fake-news-injection --fake-news-variant bearish \
+  --fake-news-mode on --community-mode off
 
-아래 실행들은 `outputs/logs/<run_id>/run_metadata.json`과 `run_complete.json` 기준으로 완료가 확인된 run입니다.
-여기서 "30일" 실험은 달력상 `2026-02-27`부터 `2026-03-27`까지 약 한 달 구간이며, 실제 실행 대상은 주식 거래일 기준 20일(`date_count=20`, `turn_count=40`)입니다.
-
-| Run ID | 조건 요약 | 기간 | 거래일/턴 | 완료 상태 | 산출물 |
-| --- | --- | --- | ---: | --- | --- |
-| `simulation_20260707_001750` | 30명, community ON, fake news OFF | `2026-02-27` ~ `2026-03-27` | 20거래일 / 40턴 | 완료 | 실행/커뮤니티/가짜뉴스/검증 보고서 생성됨 |
-| `simulation_20260707_183141_053281_49182` | 30명, community ON, fake news ON | `2026-02-27` ~ `2026-03-27` | 20거래일 / 40턴 | 완료 | 실행/커뮤니티/가짜뉴스/검증 보고서 생성됨 |
-| `simulation_20260707_184205_084828_50261` | 30명, community OFF, fake news ON | `2026-02-27` ~ `2026-03-27` | 20거래일 / 40턴 | 완료 | 실행/가짜뉴스/검증 보고서 생성됨 |
-| `simulation_20260707_185124_737097_51259` | 30명, community OFF, fake news OFF smoke test | `2026-02-27` ~ `2026-03-03` | 2거래일 / 4턴 | 완료 | 실행/검증 보고서 생성됨 |
-| `simulation_20260710_185009_391863_19763` | 30명, community OFF, fake news OFF | `2026-02-27` ~ `2026-03-27` | 20거래일 / 40턴 | 완료 | 실행/심층분석/검증 보고서 생성됨 |
-
-주의사항:
-
-- `simulation_20260707_001750`은 구버전 메타데이터에 `community_mode` 필드가 없지만, `community_posts.csv`, `community_interactions.csv`, `community_logs.csv` 등 커뮤니티 산출물이 존재하므로 community ON 실행으로 분류한다.
-- `simulation_20260707_185124_737097_51259`는 "4일" 실행이 아니라 로그 기준 `date_count=2`, `turn_count=4`인 2거래일 smoke test다.
-- 최신 baseline인 `simulation_20260710_185009_391863_19763`은 `community_mode=off`, `community_posting=False`, `community_reading=False`, `fake_news_mode=off`로 확인됐고, `agent_turns.csv`의 fake 노출/검색/선택 카운트 합계도 0이다.
-- 현재 코드는 `sys_100.db`의 앞에서부터 `--max-agents`명을 선택한다.
-
-현재 기준 비교 축은 다음과 같다.
-
-| 비교 목적 | Baseline | 비교 대상 |
-| --- | --- | --- |
-| 커뮤니티 효과 | `simulation_20260710_185009_391863_19763` | `simulation_20260707_001750` |
-| 가짜뉴스 효과, community ON 조건 | `simulation_20260707_001750` | `simulation_20260707_183141_053281_49182` |
-| 가짜뉴스 효과, community OFF 조건 | `simulation_20260710_185009_391863_19763` | `simulation_20260707_184205_084828_50261` |
-| smoke sanity check | `simulation_20260710_185009_391863_19763` | `simulation_20260707_185124_737097_51259` |
-
-## 뉴스 Depth
-
-| Depth | 동작 |
-| --- | --- |
-| 0 | 선택 뉴스 헤드라인 중심 |
-| 1 | 선택 뉴스 요약 본문까지 반영 |
-| 2 | Depth 1 정보에 더해 LLM 키워드 기반 추가 뉴스 검색 |
-
-Depth 2 검색은 `outputs/processed_news.csv`의 뉴스 풀을 사용합니다.
-
-## 커뮤니티
-
-커뮤니티 기능은 `config.py`에서 제어합니다.
-
-```python
-ENABLE_COMMUNITY = True
-ENABLE_COMMUNITY_POSTING = True
-ENABLE_COMMUNITY_READING = True
+# 동일한 주입 CSV를 읽되 fake 행은 에이전트에게 숨김
+python scripts/05_run_simulation.py \
+  --use-fake-news-injection --fake-news-variant bearish \
+  --fake-news-mode off --community-mode off
 ```
 
-커뮤니티는 매일 `pm` 체결 이후 실행됩니다.
+`fake-news-mode=on`일 때만 `is_fake=true` 행이 기본 뉴스, 본문 읽기, Depth 2 검색 후보에 들어갑니다. 에이전트가 읽는 입력에서는 fake 관련 메타데이터를 제거합니다.
 
-- Depth 1 이상 에이전트가 게시글을 작성할 수 있습니다.
-- 에이전트는 게시글 후보를 읽고 반응합니다.
-- Best 게시글과 읽기 로그는 다음 의사결정 컨텍스트에 반영됩니다.
+## 로그·리포트·검증
 
-## 로그와 리포트
-
-시뮬레이션 로그는 `outputs/logs/<run_id>/`에 생성됩니다.
-
-| 파일 | 내용 |
-| --- | --- |
-| `run_metadata.json` | 실행 옵션과 에이전트 목록 |
-| `run_complete.json` | 완료 상태 |
-| `agent_turns.csv` / `.jsonl` | 에이전트별 컨텍스트, belief, 분석, 결정 |
-| `submitted_orders.csv` | 제출 주문 |
-| `exchange_fills.csv` | 체결 내역 |
-| `daily_exchange_summary.csv` | 일별 체결 요약 |
-| `portfolio_updates.jsonl` | 포트폴리오 상태 |
-| `community_*.csv` / `.jsonl` | 커뮤니티 로그 |
-| `errors.jsonl` | 에러 로그 |
-
-리포트 생성:
+실행 로그는 `outputs/logs/<run_id>/`에 저장됩니다. 핵심 파일은 `run_metadata.json`, `run_complete.json`, `agent_turns.csv/jsonl`, `submitted_orders.csv`, `exchange_fills.csv`, `daily_exchange_summary.csv`, `portfolio_updates.jsonl`, `community_*.csv/jsonl`, `errors.jsonl`입니다.
 
 ```bash
 python scripts/generate_run_report_pdf.py \
-  --run-dir outputs/logs/simulation_YYYYMMDD_HHMMSS \
-  --output outputs/reports/simulation_YYYYMMDD_HHMMSS_report.pdf
+  --run-dir outputs/logs/<run_id> \
+  --output outputs/reports/<run_id>_report.pdf
 
-python scripts/generate_community_report_pdf.py \
-  --run-dir outputs/logs/simulation_YYYYMMDD_HHMMSS \
-  --output outputs/reports/simulation_YYYYMMDD_HHMMSS_community_report.pdf
-
-python scripts/generate_deep_analysis_report.py \
-  --run-id simulation_YYYYMMDD_HHMMSS
-```
-
-가짜뉴스 노출 및 영향 보고서:
-
-```bash
 python scripts/generate_fake_news_report_pdf.py \
-  --run-dir outputs/logs/simulation_FAKE_RUN \
-  --output outputs/reports/fake_news_impact_simulation_FAKE_RUN.pdf
-```
+  --run-dir outputs/logs/<fake_run_id> \
+  --baseline-run-dir outputs/logs/<baseline_run_id> \
+  --output outputs/reports/<fake_run_id>_fake_news.pdf
 
-Baseline 실행과 비교하려면:
-
-```bash
-python scripts/generate_fake_news_report_pdf.py \
-  --run-dir outputs/logs/simulation_FAKE_RUN \
-  --baseline-run-dir outputs/logs/simulation_BASELINE_RUN \
-  --output outputs/reports/fake_news_impact_compare.pdf
-```
-
-보고서는 PDF와 함께 `.summary.json`, `.exposures.csv`를 생성합니다. `agent_turns` 로그의 `fake_news_audit`를 기준으로 어떤 가짜뉴스가 어떤 에이전트에게 기본 노출/본문 읽기/Depth 2 검색/selected 뉴스로 잡혔는지 집계하고, baseline이 있으면 공통 에이전트와 날짜 기준으로 수익률, 순체결 수량, 주문 변경을 비교합니다.
-
-## 검증
-
-실제 개인 투자자 순거래 방향과 시뮬레이션 순거래 방향을 비교합니다.
-
-```bash
 python validation/validate_trading_direction.py \
-  --run-dir outputs/logs/simulation_YYYYMMDD_HHMMSS
+  --run-dir outputs/logs/<run_id>
 ```
 
-산출물은 `validation/outputs/<run_id>/`에 생성됩니다.
-
-## 빠른 점검
-
-데이터 준비 상태:
-
-```bash
-python scripts/99_validate.py
-```
-
-커뮤니티 포함 짧은 smoke test:
-
-```bash
-python scripts/06_run_community_smoke_test.py \
-  --max-agents 3 \
-  --max-days 2
-```
-
-## 주의 사항
-
-- 시뮬레이션 시작 시 `outputs/sim.db`의 런타임 테이블 일부가 초기화됩니다.
-- 실행 날짜는 `StockData`와 `daily_news_selection.csv`에 공통으로 존재하는 거래일만 사용합니다.
-- `pre_close_cutoff`와 `prior_close`는 전일 데이터가 필요하므로 첫 거래일이 제외될 수 있습니다.
-- LLM 비용과 속도는 에이전트 수, 거래일 수, Depth 2 비율, 커뮤니티 설정에 크게 좌우됩니다.
+검증 결과는 `validation/outputs/<run_id>/`에 생성됩니다. 실행 완료 여부와 실제 조건은 특정 과거 표가 아니라 각 run의 `run_metadata.json` 및 `run_complete.json`을 기준으로 확인합니다.

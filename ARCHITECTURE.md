@@ -127,9 +127,9 @@ ENABLE_COMMUNITY_READING
 
 ## 9. 실험 확장
 
-가짜뉴스 주입 실험은 `fake_news_injection_experiment.md`를 기준으로 별도 구현한다. 핵심 원칙은 다음이다.
+가짜뉴스 주입은 `scripts/07_prepare_fake_news_injection.py`가 bearish/bullish phase-review pkl을 런타임 CSV로 변환한 뒤 실행한다. 상세 절차는 `Event_Fake_News_DB_Guide.md`를 따른다. 핵심 원칙은 다음이다.
 
 - 기존 실제 뉴스는 제거하지 않고 가짜뉴스를 추가한다.
-- 가짜뉴스는 기본 노출과 Depth 2 검색 대상에 포함될 수 있다.
+- `fake-news-mode=on`일 때만 가짜뉴스가 기본 노출과 Depth 2 검색 대상에 포함될 수 있다.
 - 에이전트 입력에는 fake 라벨을 절대 노출하지 않는다.
 - fake 관련 라벨은 사후 분석 로그에만 남긴다.

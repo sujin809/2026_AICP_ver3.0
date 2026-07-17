@@ -1,0 +1,10 @@
+{
+  "status": "running",
+  "completed_chunks": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "runtime_db": "/Users/leeyujeong/Downloads/MD_File/twinmarket_kr_project/outputs/logs/simulation_20260715_community_off_fake_on_bullish_30_20260227_20260601/runtime_sim.db"
+}

@@ -1,0 +1,8 @@
+{
+  "run_id": "chunk_009_2026-04-27_2026-05-04",
+  "agent_count": 30,
+  "date_count": 5,
+  "information_mode": "pre_close_cutoff",
+  "decision_space": "buy_sell_only",
+  "log_dir": "outputs/logs/simulation_20260715_30agents_commoff_fakenews_off_20260227_20260601/chunks/chunk_009_2026-04-27_2026-05-04"
+}

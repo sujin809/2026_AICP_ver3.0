@@ -1,0 +1,9 @@
+{
+  "run_id": "simulation_20260715_30agents_commoff_fakenews_bearish",
+  "status": "complete",
+  "log_dir": "outputs/logs/simulation_20260715_30agents_commoff_fakenews_bearish",
+  "date_count": 63,
+  "turn_count": 126,
+  "agent_count": 30,
+  "data_rows_per_agent_file": 3780
+}

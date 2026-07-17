@@ -1,0 +1,116 @@
+{
+  "run_id": "simulation_20260715_30agents_commoff_fakenews_bearish",
+  "start_date": "2026-02-27",
+  "end_date": "2026-06-01",
+  "date_count": 63,
+  "turn_count": 126,
+  "chunk_days": 5,
+  "chunk_count": 13,
+  "max_agents": 30,
+  "concurrency": 8,
+  "community_mode": "off",
+  "fake_news_mode": "on",
+  "fake_news_variant": "bearish",
+  "processed_news_csv": "/Users/leeyujeong/Downloads/MD_File/twinmarket_kr_project/outputs/processed_news_injection_bearish.csv",
+  "daily_news_csv": "/Users/leeyujeong/Downloads/MD_File/twinmarket_kr_project/outputs/daily_news_selection_injection_bearish.csv",
+  "sim_db": "/Users/leeyujeong/Downloads/MD_File/twinmarket_kr_project/outputs/logs/simulation_20260715_30agents_commoff_fakenews_bearish/runtime_sim.db",
+  "repair_notes": [
+    {
+      "dates": [
+        "2026-03-30",
+        "2026-03-31",
+        "2026-04-01"
+      ],
+      "source": "outputs/logs/simulation_20260715_30agents_commoff_fakenews_bearish_repair2_20260330_20260401/chunks/chunk_001_2026-03-30_2026-04-01",
+      "merged_into": "chunks/chunk_005_2026-03-30_2026-04-03"
+    },
+    {
+      "date": "2026-04-30",
+      "turn": 2,
+      "subturn": "pm",
+      "agent_id": "A027",
+      "source": "outputs/logs/simulation_20260715_30agents_commoff_fakenews_bearish_repair_A027_20260430_pm/chunk_010_2026-04-30_2026-05-08",
+      "merged_into": "chunks/chunk_010_2026-04-30_2026-05-08"
+    }
+  ],
+  "chunks": [
+    {
+      "index": 1,
+      "start_date": "2026-02-27",
+      "end_date": "2026-03-06",
+      "status": "complete"
+    },
+    {
+      "index": 2,
+      "start_date": "2026-03-09",
+      "end_date": "2026-03-13",
+      "status": "complete"
+    },
+    {
+      "index": 3,
+      "start_date": "2026-03-16",
+      "end_date": "2026-03-20",
+      "status": "complete"
+    },
+    {
+      "index": 4,
+      "start_date": "2026-03-23",
+      "end_date": "2026-03-27",
+      "status": "complete"
+    },
+    {
+      "index": 5,
+      "start_date": "2026-03-30",
+      "end_date": "2026-04-01",
+      "status": "complete"
+    },
+    {
+      "index": 6,
+      "start_date": "2026-04-02",
+      "end_date": "2026-04-08",
+      "status": "complete"
+    },
+    {
+      "index": 7,
+      "start_date": "2026-04-09",
+      "end_date": "2026-04-15",
+      "status": "complete"
+    },
+    {
+      "index": 8,
+      "start_date": "2026-04-16",
+      "end_date": "2026-04-22",
+      "status": "complete"
+    },
+    {
+      "index": 9,
+      "start_date": "2026-04-23",
+      "end_date": "2026-04-29",
+      "status": "complete"
+    },
+    {
+      "index": 10,
+      "start_date": "2026-04-30",
+      "end_date": "2026-05-08",
+      "status": "complete"
+    },
+    {
+      "index": 11,
+      "start_date": "2026-05-11",
+      "end_date": "2026-05-15",
+      "status": "complete"
+    },
+    {
+      "index": 12,
+      "start_date": "2026-05-18",
+      "end_date": "2026-05-22",
+      "status": "complete"
+    },
+    {
+      "index": 13,
+      "start_date": "2026-05-26",
+      "end_date": "2026-06-01",
+      "status": "complete"
+    }
+  ]
+}

@@ -70,6 +70,20 @@ def load_json(name: str) -> dict[str, Any]:
     return json.loads((RUN_DIR / name).read_text(encoding="utf-8"))
 
 
+def load_error_logs() -> list[dict[str, Any]]:
+    paths = [RUN_DIR / "errors.jsonl"]
+    chunks_dir = RUN_DIR / "chunks"
+    if chunks_dir.exists():
+        paths.extend(sorted(chunks_dir.glob("*/errors.jsonl")))
+    rows: list[dict[str, Any]] = []
+    for path in paths:
+        if not path.exists():
+            continue
+        with path.open(encoding="utf-8") as f:
+            rows.extend(json.loads(line) for line in f if line.strip())
+    return rows
+
+
 def num(value: Any, default: float = 0.0) -> float:
     try:
         if value in (None, ""):
@@ -102,6 +116,10 @@ def row_agent_id(row: dict[str, Any]) -> str:
     return str(row.get("agent_id") or row.get("user_id") or "")
 
 
+def row_subturn(row: dict[str, Any]) -> str:
+    return str(row.get("subturn") or (row.get("context") or {}).get("subturn") or "").lower()
+
+
 def report_dir_for_run(run_id: str) -> Path:
     match = re.search(r"(20\d{6})", run_id)
     folder = match.group(1) if match else "unknown_date"
@@ -118,6 +136,32 @@ def row_quantity(row: dict[str, Any]) -> float:
 
 def row_close(row: dict[str, Any]) -> float:
     return num(row.get("close_price") or row.get("closing_price") or row.get("announced_price"))
+
+
+def final_daily_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep the final exchange summary when a resumed chunk left a blank duplicate."""
+    selected: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for row in rows:
+        key = (
+            str(row.get("date") or ""),
+            str(row.get("turn") or ""),
+            str(row.get("subturn") or ""),
+            str(row.get("stock_code") or ""),
+        )
+        current = selected.get(key)
+        score = (
+            num(row.get("submitted_orders")),
+            num(row.get("fill_count")),
+            num(row.get("volume")),
+        )
+        current_score = (
+            num(current.get("submitted_orders")),
+            num(current.get("fill_count")),
+            num(current.get("volume")),
+        ) if current else (-1.0, -1.0, -1.0)
+        if score > current_score:
+            selected[key] = row
+    return sorted(selected.values(), key=lambda row: (row.get("date", ""), int(num(row.get("turn"))), row.get("subturn", "")))
 
 
 def pct_points(value: Any) -> str:
@@ -282,7 +326,7 @@ def main() -> None:
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     complete = load_json("run_complete.json")
     agent_rows = load_csv("agent_turns.csv")
-    daily_rows = load_csv("daily_exchange_summary.csv")
+    daily_rows = final_daily_rows(load_csv("daily_exchange_summary.csv"))
     order_rows = load_csv("submitted_orders.csv")
     fill_rows = load_csv("exchange_fills.csv")
     community_posts = load_csv("community_posts.csv")
@@ -292,33 +336,64 @@ def main() -> None:
     community_selection_inputs = load_csv("community_selection_inputs.csv")
     turn_rows = load_jsonl("agent_turns.jsonl")
     portfolio_updates = load_jsonl("portfolio_updates.jsonl")
+    error_rows = load_error_logs()
 
-    by_date = defaultdict(list)
+    # Chunked runs record their aggregate settings but not the legacy agent list.
+    # Recover it from the canonical turn log so both run formats remain reportable.
+    agent_ids = list(meta.get("agent_ids") or [])
+    if not agent_ids:
+        agent_ids = sorted(
+            {
+                str(row.get("agent_id"))
+                for row in agent_rows
+                if row.get("agent_id")
+            }
+        )
+    if not agent_ids:
+        agent_ids = sorted(
+            {
+                str((row.get("agent") or {}).get("agent_id"))
+                for row in turn_rows
+                if (row.get("agent") or {}).get("agent_id")
+            }
+        )
+    meta["agent_ids"] = agent_ids
+    meta.setdefault("agent_count", len(agent_ids))
+    meta.setdefault("date_count", len({row.get("date") for row in daily_rows if row.get("date")}))
+    meta.setdefault("random_seed", "N/A")
+    if not meta.get("agent_depths"):
+        meta["agent_depths"] = {
+            str((row.get("agent") or {}).get("agent_id")): int((row.get("agent") or {}).get("news_depth", 0))
+            for row in turn_rows
+            if (row.get("agent") or {}).get("agent_id")
+        }
+
+    turns_by_session = defaultdict(list)
     by_agent = defaultdict(list)
     for row in turn_rows:
-        by_date[row["date"]].append(row)
+        turns_by_session[(row["date"], row_subturn(row))].append(row)
         by_agent[row["agent"]["agent_id"]].append(row)
-    for rows in by_date.values():
+    for rows in turns_by_session.values():
         rows.sort(key=lambda x: x["agent"]["agent_id"])
     for rows in by_agent.values():
         rows.sort(key=lambda x: x["turn"])
 
-    fills_by_date = defaultdict(list)
+    fills_by_session = defaultdict(list)
     fills_by_agent = defaultdict(list)
     for row in fill_rows:
-        fills_by_date[row["date"]].append(row)
+        fills_by_session[(row["date"], row_subturn(row))].append(row)
         aid = row_agent_id(row)
         fills_by_agent[aid].append(row)
 
-    orders_by_date = defaultdict(list)
+    orders_by_session = defaultdict(list)
     for row in order_rows:
-        orders_by_date[row["date"]].append(row)
+        orders_by_session[(row["date"], row_subturn(row))].append(row)
 
     final_close = row_close(daily_rows[-1])
-    initial_values = load_initial_values(list(meta["agent_ids"]))
+    initial_values = load_initial_values(agent_ids)
     final_states = latest_portfolios(portfolio_updates, final_close, initial_values)
     representative_agents, representative_reasons = pick_representative_agents(
-        list(meta["agent_ids"]),
+        agent_ids,
         final_states=final_states,
         order_rows=order_rows,
         fill_rows=fill_rows,
@@ -332,7 +407,7 @@ def main() -> None:
         para(
             f"실행 ID: {meta['run_id']} / 대상 종목: 삼성전자(005930) / 기간: "
             f"{daily_rows[0]['date']} ~ {daily_rows[-1]['date']} / "
-            f"에이전트: {', '.join(meta['agent_ids'])}",
+            f"에이전트: {', '.join(agent_ids)}",
             styles["KBody"],
         )
     )
@@ -350,7 +425,7 @@ def main() -> None:
             f"seed={meta['random_seed']}, concurrency={meta['concurrency']}, agent_selection={meta.get('agent_selection', 'legacy')}, "
             f"information_mode={meta.get('information_mode', 'pre_close_cutoff')}, exchange_mode={meta.get('exchange_mode', 'announced_price_binary')}",
         ],
-        ["전체 에이전트", ", ".join(meta["agent_ids"])],
+        ["전체 에이전트", ", ".join(agent_ids)],
         [
             "보고서 대표 에이전트",
             ", ".join(f"{agent_id} ({representative_reasons.get(agent_id, '')})" for agent_id in representative_agents),
@@ -360,6 +435,14 @@ def main() -> None:
         ["로그 위치", str(RUN_DIR)],
         ["완료 정보", f"{complete.get('run_id')} / {complete.get('date_count', meta['date_count'])}일 실행 완료"],
     ]
+    if error_rows:
+        error_summary = ", ".join(
+            f"{row.get('date')} turn {row.get('turn')} {row.get('agent_id')} ({row.get('error_type')})"
+            for row in error_rows[:5]
+        )
+        if len(error_rows) > 5:
+            error_summary += f" 외 {len(error_rows) - 5}건"
+        overview.append(["실행 오류", f"에이전트 턴 오류 {len(error_rows)}건: {error_summary}"])
     story.append(table([[para(c, styles["KSmall"]) for c in row] for row in overview], [35 * mm, 135 * mm]))
 
     if community_posts or community_interactions or community_logs:
@@ -398,16 +481,26 @@ def main() -> None:
         ]
         story.append(table([[para(c, styles["KSmall"]) for c in row] for row in community_summary], [35 * mm, 135 * mm]))
 
-    story.append(para("2. 일자별 전체 거래 현황", styles["KHeading1"]))
-    daily_table = [["일자", "종가", "주문", "체결", "순방향", "판단 분포", "해석"]]
+    story.append(para("2. 일자·회차별 전체 거래 현황", styles["KHeading1"]))
+    daily_table = [["일자/회차", "거래가격", "당일 시가", "당일 종가", "주문 건수", "체결 수량/건수", "순방향", "판단 분포", "해석"]]
+    open_by_date = {
+        row["date"]: num(row.get("announced_price"))
+        for row in daily_rows
+        if str(row.get("subturn", "")).lower() == "am"
+    }
     daily_insights: list[dict[str, Any]] = []
     for row in daily_rows:
         date = row["date"]
-        turns = by_date[date]
+        subturn = row_subturn(row)
+        turns = turns_by_session[(date, subturn)]
         counts = Counter(t["decision"]["action"] for t in turns)
-        day_orders = orders_by_date.get(date, [])
-        order_counts = Counter(row_action(order) for order in day_orders)
-        agent_fills = [fill for fill in fills_by_date.get(date, []) if row_agent_id(fill) != "INSTITUTIONAL"]
+        session_orders = orders_by_session.get((date, subturn), [])
+        order_counts = Counter(row_action(order) for order in session_orders)
+        agent_fills = [
+            fill
+            for fill in fills_by_session.get((date, subturn), [])
+            if row_agent_id(fill) != "INSTITUTIONAL"
+        ]
         buy_qty = sum(int(row_quantity(fill)) for fill in agent_fills if row_action(fill) == "buy")
         sell_qty = sum(int(row_quantity(fill)) for fill in agent_fills if row_action(fill) == "sell")
         net_qty = buy_qty - sell_qty
@@ -446,7 +539,9 @@ def main() -> None:
             note += "보유 판단이 늘며 매수 강도는 둔화됨."
         daily_table.append(
             [
-                date,
+                f"{date}\n{row.get('subturn', '').upper()}",
+                f"{'시가' if str(row.get('subturn', '')).lower() == 'am' else '종가'} {money(row.get('announced_price'))}",
+                money(open_by_date.get(date)),
                 money(row_close(row)),
                 f"매수 {order_counts.get('buy', 0)} / 매도 {order_counts.get('sell', 0)}",
                 f"{int(num(row['volume'])):,}주 / {row['fill_count']}건",
@@ -455,12 +550,17 @@ def main() -> None:
                 note,
             ]
         )
-    story.append(table([[para(c, styles["KSmall"]) for c in row] for row in daily_table], [20 * mm, 20 * mm, 25 * mm, 23 * mm, 22 * mm, 34 * mm, 34 * mm]))
+    story.append(
+        table(
+            [[para(c, styles["KSmall"]) for c in row] for row in daily_table],
+            [18 * mm, 19 * mm, 17 * mm, 17 * mm, 22 * mm, 21 * mm, 20 * mm, 25 * mm, 19 * mm],
+        )
+    )
 
     story.append(para("3. 핵심 관찰", styles["KHeading1"]))
     returns = [
         (agent_id, num(final_states.get(agent_id, {}).get("return_rate_marked_final")))
-        for agent_id in meta["agent_ids"]
+        for agent_id in agent_ids
         if agent_id in final_states
     ]
     returns.sort(key=lambda item: item[1])

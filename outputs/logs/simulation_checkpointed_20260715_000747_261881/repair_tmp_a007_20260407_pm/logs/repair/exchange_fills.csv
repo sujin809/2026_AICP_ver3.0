@@ -1,0 +1,4 @@
+﻿run_id,date,turn,subturn,stock_code,agent_id,action,quantity,executed_price,status
+repair,2026-04-07,4,pm,005930,A007,sell,50,196500.0,filled
+repair,2026-04-07,4,pm,005930,A007,sell,50,196500.0,filled
+repair,2026-04-07,4,pm,005930,A007,sell,1,196500.0,filled

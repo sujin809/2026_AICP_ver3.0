@@ -1,1 +1,0 @@
-{"run_id": "simulation_20260707_184205_084828_50261", "event": "agent_error", "date": "2026-03-13", "turn": 20, "agent_id": "A011", "error_type": "RuntimeError", "error": "OpenRouter chat failed after retries: "}

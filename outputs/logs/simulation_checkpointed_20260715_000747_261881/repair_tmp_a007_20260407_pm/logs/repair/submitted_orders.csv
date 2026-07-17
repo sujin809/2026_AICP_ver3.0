@@ -1,0 +1,4 @@
+﻿run_id,date,turn,subturn,agent_id,decision_date,market_features_date,news_start_date,news_start_time,news_max_date,news_end_time,execution_date,information_mode,stock_code,action,quantity,reason
+repair,2026-04-07,4,pm,A007,2026-04-07,2026-04-07,2026-04-07,08:59,2026-04-07,15:30,2026-04-07,pre_close_cutoff,005930,sell,50,"단일 턴 복원: 직전 두 회차의 50주 수익 실현과 잔여 보유 161주를 기준으로, 종가 거래에서도 보수적으로 50주를 매도합니다."
+repair,2026-04-07,4,pm,A007,2026-04-07,2026-04-07,2026-04-07,08:59,2026-04-07,15:30,2026-04-07,pre_close_cutoff,005930,sell,50,"PER/PB 등 가치 지표 부재로 저평가 판단 불가, 당일 고점 이탈 (-2.7%) 및 변동성 확대 우려로 수익 보호 필요."
+repair,2026-04-07,4,pm,A007,2026-04-07,2026-04-07,2026-04-07,08:59,2026-04-07,15:30,2026-04-07,pre_close_cutoff,005930,sell,1,"fallback_decision_after_invalid_llm_output: the model failed to return a valid decision after retry, so the system submitted a minimal valid sell order."

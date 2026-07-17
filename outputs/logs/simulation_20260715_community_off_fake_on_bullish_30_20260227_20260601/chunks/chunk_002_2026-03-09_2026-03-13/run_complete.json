@@ -1,0 +1,8 @@
+{
+  "run_id": "chunk_002_2026-03-09_2026-03-13",
+  "agent_count": 30,
+  "date_count": 5,
+  "information_mode": "pre_close_cutoff",
+  "decision_space": "buy_sell_only",
+  "log_dir": "outputs/logs/simulation_20260715_community_off_fake_on_bullish_30_20260227_20260601/chunks/chunk_002_2026-03-09_2026-03-13"
+}
