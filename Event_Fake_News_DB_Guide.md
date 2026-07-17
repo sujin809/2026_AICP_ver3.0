@@ -6,13 +6,13 @@
 
 | 파일 | 역할 |
 | --- | --- |
-| `data/event.pkl` | 이벤트 후보와 근거 뉴스·예측 가능성·주입 정책 |
+| `data/event.pkl` | 현재 승인된 9개 source pair의 30개 날짜별 주입 일정·근거 뉴스 |
 | `data/fake_news_bearish_phase_review.pkl` | bearish phase-review 자극 |
 | `data/fake_news_bullish_phase_review.pkl` | bullish phase-review 자극 |
 | `outputs/processed_news.csv` | baseline 전체 뉴스 풀 |
 | `outputs/daily_news_selection.csv` | baseline 일별 기본 노출 뉴스 |
 
-`event.pkl`은 이벤트의 근거 DB이고, 런타임에서 직접 읽는 파일은 아닙니다. 런타임에는 아래 스크립트가 만든 polarity별 CSV를 사용합니다.
+`event.pkl`은 현재 가짜뉴스 자극의 일정·근거 DB이고, 런타임에서 직접 읽는 파일은 아닙니다. 런타임에는 아래 스크립트가 만든 polarity별 CSV를 사용합니다.
 
 ```bash
 python scripts/07_prepare_fake_news_injection.py --variant both
