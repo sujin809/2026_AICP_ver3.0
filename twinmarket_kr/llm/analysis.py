@@ -5,6 +5,13 @@ from typing import Any, Callable
 
 from twinmarket_kr.llm.belief import load_prompt
 from twinmarket_kr.llm.client import OpenRouterClient, response_content, stable_llm_seed
+from twinmarket_kr.llm.validation import (
+    LLMValidationError,
+    build_validation_retry_prompt,
+    normalize_string_list,
+    record_validation_failure,
+    valid_string_list,
+)
 
 
 NEWS_INTERPRETATION_KEYS = (
@@ -30,7 +37,6 @@ MARKET_ANALYSIS_KEYS = (
 )
 
 DEPTH2_PRE_SEARCH_KEYS = (
-    "search_needed",
     "key_findings",
     "curiosity_points",
     "search_rationale",
@@ -45,8 +51,28 @@ DEPTH2_POST_SEARCH_KEYS = (
 )
 
 
-class AnalysisValidationError(RuntimeError):
+class AnalysisValidationError(LLMValidationError):
     pass
+
+
+DEPTH2_PRE_SEARCH_SCHEMA = """
+{
+  "key_findings": ["비어 있지 않은 문자열", "..."],
+  "curiosity_points": ["비어 있지 않은 문자열", "..."],
+  "search_rationale": "비어 있지 않은 문자열",
+  "search_keywords": ["3~8개의 검색 키워드", "...", "..."]
+}
+"""
+
+DEPTH2_POST_SEARCH_SCHEMA = """
+{
+  "new_findings": ["새로 확인한 내용"],
+  "view_change": "강화 또는 수정 또는 반전 또는 유지",
+  "view_change_detail": "비어 있지 않은 문자열",
+  "unresolved_questions": ["아직 불명확한 쟁점"]
+}
+새로운 내용이나 미해결 쟁점이 없으면 해당 배열은 []로 출력할 수 있습니다.
+"""
 
 
 def _nonempty_text_or_string_list(value: Any) -> bool:
@@ -68,13 +94,6 @@ def parse_json_object(content: str, required_keys: tuple[str, ...], label: str) 
     if missing:
         raise ValueError(f"{label} JSON missing keys: {missing}")
     return data
-
-
-def with_defaults(data: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
-    normalized = dict(data)
-    for key, value in defaults.items():
-        normalized.setdefault(key, value)
-    return normalized
 
 
 def parse_json_loose(content: str) -> dict[str, Any]:
@@ -99,27 +118,99 @@ async def _required_json_response(
     seed: int | None,
     validation_attempts: int = 4,
     validator: Callable[[dict[str, Any]], list[str]] | None = None,
+    normalizer: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    schema_hint: str = "요청된 모든 JSON 키와 자료형을 정확히 지키세요.",
 ) -> dict[str, Any]:
+    if validation_attempts < 1:
+        raise ValueError("validation_attempts must be at least 1")
     invalid_history: list[list[str]] = []
+    current_prompt = prompt
     for attempt in range(1, validation_attempts + 1):
+        attempt_seed = stable_llm_seed(seed or 0, label, attempt)
         response = await client.chat(
-            [{"role": "user", "content": prompt}],
+            [{"role": "user", "content": current_prompt}],
             response_format={"type": "json_object"},
             temperature=0.2 if attempt == 1 else 0.1,
-            seed=stable_llm_seed(seed or 0, label, attempt),
+            seed=attempt_seed,
             audit_label=label,
         )
-        data = parse_json_loose(response_content(response) or "{}")
+        raw_content = response_content(response) or "{}"
+        data = parse_json_loose(raw_content)
+        if normalizer is not None:
+            data = normalizer(data)
         missing = [key for key in required_keys if key not in data]
         validation_errors = validator(data) if not missing and validator is not None else []
         if not missing and not validation_errors:
             data["generation_attempts"] = attempt
             return data
-        invalid_history.append([*missing, *validation_errors])
+        errors = [*[f"missing:{key}" for key in missing], *validation_errors]
+        invalid_history.append(errors)
+        record_validation_failure(
+            label=label,
+            attempt=attempt,
+            errors=errors,
+            raw_content=raw_content,
+            seed=attempt_seed,
+        )
+        current_prompt = build_validation_retry_prompt(
+            prompt,
+            errors=errors,
+            schema_hint=schema_hint,
+        )
     raise AnalysisValidationError(
         f"{label} did not produce all required JSON keys after "
         f"{validation_attempts} attempts: {invalid_history}"
     )
+
+
+def normalize_depth2_pre_search(value: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(value)
+    for key in ("key_findings", "curiosity_points", "search_keywords"):
+        if key in normalized:
+            normalized[key] = normalize_string_list(normalized[key])
+    if isinstance(normalized.get("search_keywords"), list) and all(
+        isinstance(item, str) for item in normalized["search_keywords"]
+    ):
+        normalized["search_keywords"] = normalized["search_keywords"][:8]
+    return normalized
+
+
+def validate_depth2_pre_search(value: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    for key in ("key_findings", "curiosity_points"):
+        if not valid_string_list(value.get(key), allow_empty=False):
+            errors.append(f"{key}:requires_nonempty_string_list")
+    if not isinstance(value.get("search_rationale"), str) or not value[
+        "search_rationale"
+    ].strip():
+        errors.append("search_rationale:requires_nonempty_string")
+    keywords = value.get("search_keywords")
+    if not valid_string_list(keywords, allow_empty=False) or not 3 <= len(keywords) <= 8:
+        errors.append("search_keywords:requires_3_to_8_strings")
+    return errors
+
+
+def normalize_depth2_post_search(value: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(value)
+    for key in ("new_findings", "unresolved_questions"):
+        if key in normalized:
+            normalized[key] = normalize_string_list(normalized[key])
+    return normalized
+
+
+def validate_depth2_post_search(value: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    if not valid_string_list(value.get("new_findings"), allow_empty=True):
+        errors.append("new_findings:requires_string_list")
+    if value.get("view_change") not in {"강화", "수정", "반전", "유지"}:
+        errors.append("view_change:invalid")
+    if not isinstance(value.get("view_change_detail"), str) or not value[
+        "view_change_detail"
+    ].strip():
+        errors.append("view_change_detail:requires_nonempty_string")
+    if not valid_string_list(value.get("unresolved_questions"), allow_empty=True):
+        errors.append("unresolved_questions:requires_string_list")
+    return errors
 
 
 async def interpret_news(
@@ -171,12 +262,9 @@ async def depth2_pre_search(
     seed: int | None = None,
 ) -> dict[str, Any]:
     client = client or OpenRouterClient()
-    prompt = load_prompt("news_agent.txt").format(
-        mode="pre_search",
+    prompt = load_prompt("news_agent_pre_search.txt").format(
         persona_prompt=agent["persona_prompt"],
         base_news_context=json.dumps(base_news_context, ensure_ascii=False, indent=2),
-        search_results="[]",
-        pre_search_thinking="{}",
     )
     data = await _required_json_response(
         client=client,
@@ -184,43 +272,10 @@ async def depth2_pre_search(
         required_keys=DEPTH2_PRE_SEARCH_KEYS,
         label="depth2_pre_search",
         seed=seed,
-        validator=lambda value: [
-            *(
-                []
-                if isinstance(value.get("search_needed"), bool)
-                else ["search_needed:not_boolean"]
-            ),
-            *(
-                []
-                if isinstance(value.get("curiosity_points"), list)
-                else ["curiosity_points:not_list"]
-            ),
-            *(
-                []
-                if isinstance(value.get("search_keywords"), list)
-                and 3 <= len(value["search_keywords"]) <= 8
-                and all(
-                    isinstance(keyword, str) and keyword.strip()
-                    for keyword in value["search_keywords"]
-                )
-                else ["search_keywords:requires_3_to_8_strings"]
-            ),
-            *[
-                f"{key}:empty"
-                for key in ("key_findings", "search_rationale")
-                if not isinstance(value.get(key), str) or not value[key].strip()
-            ],
-        ],
+        normalizer=normalize_depth2_pre_search,
+        validator=validate_depth2_pre_search,
+        schema_hint=DEPTH2_PRE_SEARCH_SCHEMA,
     )
-    data = with_defaults(data, {
-        "search_needed": bool(data.get("search_keywords")),
-        "key_findings": "",
-        "curiosity_points": [],
-        "search_rationale": "",
-        "search_keywords": [],
-    })
-    data["search_needed"] = bool(data["search_needed"])
-    data["search_keywords"] = [str(keyword).strip() for keyword in data["search_keywords"] if str(keyword).strip()][:8]
     return data
 
 
@@ -234,8 +289,7 @@ async def depth2_post_search(
     seed: int | None = None,
 ) -> dict[str, Any]:
     client = client or OpenRouterClient()
-    prompt = load_prompt("news_agent.txt").format(
-        mode="post_search",
+    prompt = load_prompt("news_agent_post_search.txt").format(
         persona_prompt=agent["persona_prompt"],
         base_news_context=json.dumps(base_news_context, ensure_ascii=False, indent=2),
         search_results=json.dumps(search_results, ensure_ascii=False, indent=2),
@@ -247,30 +301,10 @@ async def depth2_post_search(
         required_keys=DEPTH2_POST_SEARCH_KEYS,
         label="depth2_post_search",
         seed=seed,
-        validator=lambda value: [
-            *(
-                []
-                if value.get("view_change") in {"강화", "수정", "반전", "유지"}
-                else ["view_change:invalid"]
-            ),
-            *(
-                []
-                if isinstance(value.get("unresolved_questions"), list)
-                else ["unresolved_questions:not_list"]
-            ),
-            *[
-                f"{key}:not_string"
-                for key in ("new_findings", "view_change_detail")
-                if not isinstance(value.get(key), str)
-            ],
-        ],
+        normalizer=normalize_depth2_post_search,
+        validator=validate_depth2_post_search,
+        schema_hint=DEPTH2_POST_SEARCH_SCHEMA,
     )
-    data = with_defaults(data, {
-        "new_findings": "",
-        "view_change": "유지",
-        "view_change_detail": "",
-        "unresolved_questions": [],
-    })
     return data
 
 

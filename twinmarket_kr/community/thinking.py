@@ -3,8 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 import config
+from twinmarket_kr.community.validation import CommunityValidationError
 from twinmarket_kr.llm.belief import load_prompt
 from twinmarket_kr.llm.client import OpenRouterClient, response_content, stable_llm_seed
+from twinmarket_kr.llm.validation import build_validation_retry_prompt, record_validation_failure
 
 
 async def community_thinking(
@@ -21,18 +23,35 @@ async def community_thinking(
         posts_read_summary=_format_posts_read(community_log.get("posts_read") or []),
         depth=int(agent.get("news_depth") or 0),
     )
+    current_prompt = prompt
     for attempt in range(1, 5):
+        attempt_seed = stable_llm_seed(seed or 0, "community_thinking_validation", attempt)
         response = await client.chat(
-            [{"role": "user", "content": prompt}],
+            [{"role": "user", "content": current_prompt}],
             model=config.OPENROUTER_COMMUNITY_MODEL,
             temperature=0.3 if attempt == 1 else 0.1,
-            seed=stable_llm_seed(seed or 0, "community_thinking_validation", attempt),
+            seed=attempt_seed,
             audit_label="community_thinking",
         )
-        content = response_content(response).strip()
+        raw_content = response_content(response)
+        content = raw_content.strip()
         if content:
             return content
-    raise RuntimeError("community thinking was empty after 4 attempts")
+        errors = ["community_thinking:requires_nonempty_text"]
+        record_validation_failure(
+            label="community_thinking",
+            attempt=attempt,
+            errors=errors,
+            raw_content=raw_content,
+            seed=attempt_seed,
+        )
+        current_prompt = build_validation_retry_prompt(
+            prompt,
+            errors=errors,
+            schema_hint="커뮤니티 정보에 대한 비어 있지 않은 한국어 생각을 자유 형식 텍스트로 작성하세요.",
+            json_only=False,
+        )
+    raise CommunityValidationError("community thinking was empty after 4 attempts")
 
 
 def _format_best_posts(best_posts: list[dict[str, Any]]) -> str:

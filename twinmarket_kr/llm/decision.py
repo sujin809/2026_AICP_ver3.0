@@ -6,6 +6,7 @@ from typing import Any
 import config
 from twinmarket_kr.llm.belief import load_prompt
 from twinmarket_kr.llm.client import OpenRouterClient, response_content, stable_llm_seed
+from twinmarket_kr.llm.validation import LLMValidationError, record_validation_failure
 
 
 DECISION_KEYS = ("action", "quantity", "reason", "risk_control")
@@ -127,8 +128,12 @@ def parse_decision_json(content: str, constraints: dict[str, Any] | None = None)
     }
 
 
-class DecisionValidationError(RuntimeError):
+class DecisionValidationError(LLMValidationError):
     pass
+
+
+class DecisionConstraintError(LLMValidationError):
+    """No valid buy/sell can be executed under the current portfolio constraints."""
 
 
 def _decision_diagnostics(
@@ -177,6 +182,10 @@ async def make_decision(
     seed: int | None = None,
     validation_attempts: int = 4,
 ) -> dict[str, Any]:
+    if not trading_constraints.get("allowed_actions"):
+        raise DecisionConstraintError(
+            "No buy/sell action is executable under the current cash and holding constraints"
+        )
     client = client or OpenRouterClient()
     decision_space_instruction = (
         '이번 실행에서는 action이 반드시 "buy" 또는 "sell"이어야 합니다. "hold"는 선택할 수 없습니다.'
@@ -197,19 +206,28 @@ async def make_decision(
     invalid_history: list[list[str]] = []
     current_prompt = prompt
     for attempt in range(1, validation_attempts + 1):
+        attempt_seed = stable_llm_seed(seed or 0, "decision_validation", attempt)
         response = await client.chat(
             [{"role": "user", "content": current_prompt}],
             response_format={"type": "json_object"},
             temperature=0.2 if attempt == 1 else 0.1,
-            seed=stable_llm_seed(seed or 0, "decision_validation", attempt),
+            seed=attempt_seed,
             audit_label="trading_decision",
         )
-        decision = parse_decision_json(response_content(response) or "{}", trading_constraints)
+        raw_content = response_content(response) or "{}"
+        decision = parse_decision_json(raw_content, trading_constraints)
         if decision.get("valid"):
             decision.update(_decision_diagnostics(decision, trading_constraints, attempts=attempt))
             decision["invalid_attempt_errors"] = invalid_history
             return decision
         invalid_history.append(list(decision.get("validation_errors") or []))
+        record_validation_failure(
+            label="trading_decision",
+            attempt=attempt,
+            errors=list(decision.get("validation_errors") or []),
+            raw_content=raw_content,
+            seed=attempt_seed,
+        )
         current_prompt = (
             prompt
             + "\n\n이전 응답은 거래 제약을 위반했습니다. "

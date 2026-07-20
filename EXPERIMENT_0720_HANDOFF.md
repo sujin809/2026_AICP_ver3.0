@@ -101,7 +101,7 @@ matrix launcher가 Ctrl-C로 취소되면 자식 condition runner를 종료하�
 
 여섯 프로세스는 `outputs/.openrouter_slots`의 16개 lock을 공유한다. 조건당 16개가 아니라 컴퓨터 전체 합계가 16개다.
 
-SDK 내부의 숨은 자동 재시도는 0으로 설정하고, 코드가 직접 최대 6회 재시도한다. timeout·네트워크·408·409·429·5xx만 backoff 대상으로 삼고, 인증·요청 형식 오류 같은 비재시도 오류는 빠르게 중단한다.
+SDK 내부의 숨은 자동 재시도는 0으로 설정하고, 코드가 직접 최대 6회 재시도한다. 알려진 timeout·네트워크 예외와 408·409·429·5xx만 backoff 대상으로 삼고, status가 없는 임의의 ValueError/TypeError, 인증·요청 형식 오류 같은 비재시도 오류는 빠르게 중단한다.
 
 각 호출에는 agent×global turn×stage 기반의 안정적인 파생 seed가 들어간다. API 감사 JSONL에는 다음을 남긴다.
 
@@ -117,7 +117,26 @@ API key와 prompt 원문은 기록하지 않는다.
 
 각 호출 직후 요청 모델이 `qwen/qwen3.5-flash-02-23`인지 확인하고, OpenRouter 응답에 반환 모델이 명시된 경우에도 같은 모델인지 검사한다. 불일치는 재시도 가능한 통신 오류로 취급하지 않고 즉시 phase를 복구한다. 완료 시에도 전체 감사 로그를 다시 검사한다. provider는 감사용으로 기록하되 조건 간 provider 집합의 완전 일치를 완료 요건으로 강제하지 않는다. 라우터의 정상적인 provider 전환 때문에 이미 끝난 실험 전체를 마지막에 실패 처리하지 않기 위해서다.
 
-### 3.6 모델 출력 오류는 해당 호출만 재시도
+### 3.6 Depth 2 장애 원인과 canonical schema
+
+2026-07-20 다른 컴퓨터의 C00 첫 AM에서 Depth 2 에이전트 4명이 모두 중단된 원인은 API key·worker·429가 아니라 validator와 Qwen 응답 자료형의 불일치였다.
+
+- 당시 OpenRouter 호출 391건 중 385건은 성공했고 429는 0건이었다.
+- `key_findings`를 validator는 문자열만 허용했지만, 과거 성공 로그 3,023건 중 2,606건(약 86%)이 문자열 배열이었다.
+- `depth2_post_search.new_findings`도 과거 응답 대부분이 배열이므로 pre만 고치면 다음 단계에서 같은 장애가 날 수 있었다.
+- 같은 prompt를 오류 설명 없이 네 번 보내고, phase가 실패하면 launcher가 같은 AM을 다시 시작해 호출량이 불필요하게 증가했다.
+
+수정된 표준 스키마는 다음과 같다.
+
+- pre: `key_findings: list[string]`, `curiosity_points: list[string]`, `search_rationale: string`, `search_keywords: list[string]` 3~8개
+- post: `new_findings: list[string]`, `view_change: 강화/수정/반전/유지`, `view_change_detail: string`, `unresolved_questions: list[string]`
+- 과거 Qwen이 핵심 내용·새 발견을 비어 있지 않은 문자열 하나로 반환한 경우에는 의미를 바꾸지 않고 원소 하나짜리 배열로 정규화한다.
+- 숫자·객체 등 무관한 타입, 빈 핵심 내용, 잘못된 enum은 정규화하지 않고 재시도한다.
+- Depth 2는 정의상 매 turn 검색하므로 혼란을 만들던 `search_needed` 필드를 제거했다.
+
+pre와 post 스키마를 한 prompt에 함께 넣으면 엉뚱한 단계의 키를 반환할 수 있으므로 `prompts/news_agent_pre_search.txt`와 `prompts/news_agent_post_search.txt`로 완전히 분리했다. 각 파일에 해당 단계의 자료형과 JSON 예시 하나만 명시했고, 잘못된 응답에는 직전 validation 오류와 정확한 스키마를 다음 요청에 포함한다.
+
+### 3.7 모델 출력 오류는 해당 호출만 재시도
 
 관련 파일:
 
@@ -127,12 +146,18 @@ API key와 prompt 원문은 기록하지 않는다.
 - `twinmarket_kr/community/posting.py`
 - `twinmarket_kr/community/reading.py`
 - `twinmarket_kr/community/thinking.py`
+- `twinmarket_kr/llm/validation.py`
+- `twinmarket_kr/community/validation.py`
 
-단순히 JSON object인지 확인하는 데서 끝내지 않고 필수 key, 문자열/list/boolean 타입, enum, 비어 있지 않은 설명을 검사한다. 잘못된 출력은 다른 파생 seed로 해당 LLM 단계만 최대 4회 재시도한다.
+단순히 JSON object인지 확인하는 데서 끝내지 않고 필수 key, 문자열/list/boolean 타입, enum, 비어 있지 않은 설명을 검사한다. 잘못된 출력은 다른 파생 seed로 해당 LLM 단계만 최대 4회 재시도한다. 두 번째 요청부터는 같은 prompt를 반복하지 않고 직전 오류와 요구 스키마를 명시한다.
 
 4회 모두 실패하면 임의 내용을 채우지 않고 phase를 pause·rollback한다. 따라서 malformed JSON이 가짜 belief, 임의의 community reaction, 임의의 거래로 바뀌지 않는다.
 
-### 3.7 deterministic 1주 fallback 제거
+검증 실패 응답은 조건 폴더의 `llm_validation_errors.jsonl`에 최대 2KB excerpt, response hash, label, attempt, seed, 오류 목록만 기록한다. API key와 전체 prompt는 기록하지 않는다. 성공적으로 보정된 재시도 횟수는 최종 `run_metadata.json`에도 단계별로 집계된다.
+
+프로세스 자동 재시작은 timeout·연결 오류·408·409·429·5xx처럼 명확한 일시 장애에만 허용한다. schema 오류, 모델 불일치, 실행 불가능한 거래 제약, 로컬 무결성 오류는 같은 입력을 반복해도 낫지 않으므로 `paused.json`에 분류를 남기고 자동 반복을 멈춘다. 같은 병렬 phase에서 timeout과 schema 오류가 섞여도 모든 child exception을 보존해 하나의 deterministic 오류라도 있으면 반복하지 않는다. launcher는 각 프로세스 시작 전후 `paused.json` fingerprint를 비교해 이번 시도에서 새로 쓰인 판정만 사용하며, 이전 시도의 stale 파일을 재사용하지 않는다. 다만 전원 종료·프로세스 kill처럼 예외 처리 전에 종료되어 새 paused 파일이 없고 checkpoint에 `inflight_phase`가 남아 있으면 안전한 interrupted process로 분류해 snapshot 복구 후 재시작한다. 사용자가 원인을 수정한 뒤 동일 명령으로 체크포인트부터 재개할 수도 있다.
+
+### 3.8 deterministic 1주 fallback 제거
 
 관련 파일:
 
@@ -150,7 +175,7 @@ API key와 prompt 원문은 기록하지 않는다.
 - 최초 응답 성공 또는 validation retry
 - `deterministic_fallback_used=false`
 
-### 3.8 뉴스 depth와 시점
+### 3.9 뉴스 depth와 시점
 
 관련 파일:
 
@@ -164,7 +189,7 @@ API key와 prompt 원문은 기록하지 않는다.
 - Depth 1: 후보 headline·본문 전부, 검색 0, 커뮤니티 본문 최대 5개
 - Depth 2: 후보 headline·본문 전부, 직전 7일 검색 최대 10개, 커뮤니티 본문 최대 10개와 작성자 최근 맥락
 
-Depth 2는 기존 prompt대로 매 turn 3~8개 키워드를 만들고 검색한다. `search_needed`는 현재 판단 기록일 뿐 검색 실행을 막지 않는다.
+Depth 2는 매 turn 3~8개 키워드를 만들고 검색한다. 정의와 실행이 어긋날 수 있던 `search_needed` 필드는 제거했다.
 
 7일 검색은 정확한 AM/PM cutoff 이전 기사만 포함한다. 과거에 주입된 fake도 게시 시점 이후 7일 동안 검색될 수 있으며 feed 노출과 검색 재노출을 별도 기록한다.
 
@@ -179,7 +204,7 @@ Depth 2는 기존 prompt대로 매 turn 3~8개 키워드를 만들고 검색한�
 
 `selected_news`는 사전 본문 선택이 아니라 열람 이후 영향 뉴스다.
 
-### 3.9 커뮤니티 시간 순서
+### 3.10 커뮤니티 시간 순서
 
 관련 파일:
 
@@ -190,7 +215,7 @@ Depth 2는 기존 prompt대로 매 turn 3~8개 키워드를 만들고 검색한�
 
 posting 여부는 실제 JSON boolean만 허용한다. 글 유형·제목·본문, 선택 post ID, 모든 선택 글에 대한 reaction을 검증하고 잘못된 값은 해당 호출만 재시도한다.
 
-### 3.10 가짜뉴스 자극물 provenance
+### 3.11 가짜뉴스 자극물 provenance
 
 관련 파일:
 
@@ -202,7 +227,7 @@ manifest는 프로젝트 상대경로, 입력·출력 hash, 승인/미승인 수
 
 주의: 저장소에 현재 체크인된 manifest는 수정 전 산출물이어서 이전 컴퓨터의 절대경로를 담고 있다. 사용자가 코드만 수정하라고 했기 때문에 이 작업에서는 CSV와 manifest를 다시 쓰지 않았다. C00에는 fake 입력이 없어 영향이 없다. 내일 fake 조건 전 승인 정책을 결정한 뒤 `python3.12 scripts/07_prepare_fake_news_injection.py --variant both`를 실행해야 새 상대경로·hash·승인 수 manifest가 실제로 생성된다.
 
-### 3.11 실행 전·후 무결성 검증
+### 3.12 실행 전·후 무결성 검증
 
 관련 파일:
 
@@ -232,7 +257,7 @@ API 호출 전에 다음을 검증한다.
 - community on/off별 로그 완전성
 - DB boundary state SHA-256
 
-### 3.12 오늘 1조건, 내일 5조건
+### 3.13 오늘 1조건, 내일 5조건
 
 관련 파일:
 
@@ -285,16 +310,13 @@ API 호출 전에 다음을 검증한다.
 
 C00에는 fake가 없으므로 오늘 밤 기준조건 실행에는 영향을 주지 않는다. 내일 나머지 5조건 전에는 결정해야 한다.
 
-### Q4. GitHub 반영 branch 이름
-
-현재 로컬 branch는 `samsung-baseline`이다. 이전에 말한 `0720`이 새 branch 이름을 뜻한다면 push 전에 `0720` branch를 만들지, 현재 branch에 commit할지 확인해야 한다. 이 작업에서는 임의로 branch를 바꾸거나 push하지 않았다.
-
 ## 6. 실행 전 Git 인수인계 체크리스트
 
 - `git diff --check` 통과 확인
 - Python compile 및 단위 테스트 결과 확인
 - 실제 OpenRouter 호출을 이 컴퓨터에서 하지 않았는지 확인
-- `EXPERIMENT_0720_RUNBOOK.md`의 오늘/내일 명령 재확인
+- branch가 `samsung-baseline-0720`이고 최신 수정 commit인지 확인
+- `EXPERIMENT_0720_RUNBOOK.md`의 오늘/내일 명령과 새 `paper_0720_v2` output root 재확인
 - GitHub 반영 후 다른 컴퓨터에서 `.env`의 Qwen 모델과 concurrency 확인
 - 다른 컴퓨터에서 `python3.12 scripts/04_build_experiment_base.py --force`를 한 번 실행
 - C00 완료 전 나머지 5조건을 시작하지 않음
@@ -302,16 +324,21 @@ C00에는 fake가 없으므로 오늘 밤 기준조건 실행에는 영향을 �
 
 ### 6.1 이 컴퓨터에서 완료한 오프라인 검증
 
-2026-07-20 기준 실제 OpenRouter 호출이나 simulation turn 실행 없이 다음을 확인했다.
+2026-07-20 기준 실제 OpenRouter 호출 없이 다음을 확인했다.
 
 - `git diff --check`: 통과
 - `python3.12 -m compileall -q config.py twinmarket_kr scripts tests`: 통과
-- `python3.12 -m unittest discover -s tests -v`: 안전성 테스트 8개 통과
+- `python3.12 -m unittest discover -s tests -v`: 안전성 테스트 17개 통과
 - 뉴스 사전검사: baseline·bearish·bullish 모두 63거래일/126 slot 통과
 - fake 입력: bearish·bullish 각각 30개 자극/30개 서로 다른 slot, 모든 fake slot 10+1 통과
 - clean base 임시 생성: 100명 turn 0 belief·portfolio, 무보유, runtime table 0건 검증 통과
+- C00 오프라인 1거래일: 30명, concurrency 30, AM·PM·community 경계, 60 agent-turn, Depth 2 8 turn, `run_complete.json` 생성
+- community-on 오프라인 1거래일: 게시 20건, 참여 로그 20건, frozen board·reaction·Best 5를 포함해 `run_complete.json` 생성
+- 최종 entrypoint 오프라인 1거래일: `scripts/08_run_six_conditions.py`로 C00 matrix가 1회 실행에 `complete`, 조건 `run_complete.json`, 최종 study invariant 검증까지 통과
+- Depth 2 historical fixture: list와 string 응답을 동일한 canonical list로 정규화하고 잘못된 응답에 오류 피드백·감사 로그가 남는지 확인
+- 재시작 분류: schema/로컬 오류는 자동 반복하지 않고, cause chain에 있는 timeout은 체크포인트 재시작을 허용하며, mixed parallel error가 schema 오류를 숨기지 않는지 확인
 
-이 검증은 API 응답 품질·속도·429를 확인하는 smoke run이 아니다. 실제 Qwen 호출은 OpenRouter가 있는 다른 컴퓨터에서만 수행한다.
+모든 오프라인 명령은 `TWINMARKET_OFFLINE_LLM=1`을 명시했다. 이 모드에서는 네트워크 호출 전에 deterministic stub을 반환하며, 임시 metadata의 API count는 0이고 `openrouter_calls.jsonl`도 생성되지 않았다. 따라서 이 컴퓨터에서는 API key나 실제 OpenRouter를 사용하지 않았다. 오프라인 turn은 실제 API 응답 품질·속도·429를 확인하는 smoke run이 아니며 실제 Qwen 호출은 OpenRouter가 있는 다른 컴퓨터에서만 수행한다.
 
 ## 7. 분석 자산 정리
 
@@ -334,7 +361,10 @@ C00에는 fake가 없으므로 오늘 밤 기준조건 실행에는 영향을 �
 | worker 30이 API를 과도하게 호출함 | agent concurrency 30과 실제 API concurrency를 분리, 컴퓨터 전체 API 상한 16 | 완료 |
 | worker 증가가 DB·커뮤니티 순서를 바꿈 | DB write lock, posting 저장·reaction 반영을 agent ID 순서로 고정 | 완료 |
 | 429·timeout·일시 장애로 실험이 중단됨 | Retry-After/backoff, 호출 최대 6회, process 최대 5회 재시작, phase resume | 완료 |
-| 잘못된 JSON을 기본값으로 덮어 가짜 결과가 생김 | 필수 schema 검증 후 호출 단위 재시도, 실패 시 임의 값 없이 rollback | 완료 |
+| 잘못된 JSON을 기본값으로 덮어 가짜 결과가 생김 | 필수 schema 검증 후 오류를 다음 요청에 피드백, 실패 시 임의 값 없이 rollback | 완료 |
+| Qwen의 list 응답을 빈 문자열로 오판함 | Depth 2 pre/post canonical list schema와 string→singleton-list 정규화 | 완료 |
+| deterministic schema 오류가 launcher에서 AM 전체를 반복함 | 일시 장애만 자동 재시작하고 validation·로컬 오류는 pause | 완료 |
+| 오류 응답 본문이 없어 원인 확인이 어려움 | 최대 2KB excerpt와 hash를 별도 validation audit에 기록 | 완료 |
 | Qwen 외 모델이 섞임 | 요청·응답 모델을 매 호출 및 완료 시 검사하고 불일치 즉시 차단 | 완료 |
 | 6조건이 다른 초기 DB를 사용함 | 검증된 clean base에서 조건별 독립 runtime DB 생성 | 완료 |
 | 오늘 C00, 내일 나머지 5조건을 같은 실험으로 이어야 함 | 같은 output root에서 C00 완료 확인 후 5조건 허용, seed·cohort·hash 비교 | 완료 |
@@ -357,12 +387,12 @@ C00에는 fake가 없으므로 오늘 밤 기준조건 실행에는 영향을 �
 | 과거 `outputs/logs/simulation_*` 결과가 새 실험에 섞임 | 새 논문 run은 clean base에서 조건별 독립 DB를 만들며 과거 log 폴더를 입력으로 읽지 않음 | 완료 |
 | 같은 새 output 경로를 재사용해 다른 실험이 섞임 | checkpoint가 없는데 조건 폴더가 존재하면 중단하고, checkpoint가 있으면 signature 일치 시에만 의도적으로 resume | 완료 |
 | 과거 실행 스크립트를 실수로 사용함 | 논문 entrypoint를 `08_run_six_conditions.py`로 한정하고 경고 | 완료 |
-| 실제 API 없이도 오류를 최대한 확인해야 함 | compile·8개 단위 테스트·뉴스 3조건·clean base 오프라인 검증 | 완료 |
+| 실제 API 없이도 오류를 최대한 확인해야 함 | compile·17개 단위 테스트·뉴스 3조건·clean base·C00/community-on 1일 오프라인 실행 | 완료 |
 | OpenRouter 실시간 429/처리량을 이 컴퓨터에서 알 수 없음 | 16개 상한·retry·resume로 안전하게 처리하고 API audit 기록 | 운영 중 관찰 필요 |
 | buy/sell 모두 불가능한 극단 상태 | 임의 주문 없이 pause하도록 안전 처리 | 정책 예외 적용 여부 미결정(Q2) |
 | 2026-03-23 PM 실제 뉴스가 9개 | 양 조건에 동일하게 9개 허용, 문구는 최대 10개 권장 | 사용자 확인(Q1) |
 | fake 60건이 `final_approval=false` | C00 영향 없음, 내일 5조건 전에 승인 정책 결정 | 사용자 확인(Q3) |
-| 어느 branch로 push할지 | 현재 `samsung-baseline`, 임의 branch 생성·push 안 함 | 사용자 확인(Q4) |
+| 어느 branch로 push할지 | `samsung-baseline-0720`으로 확정 | 완료 |
 
 ### 8.1 concurrency 결론
 

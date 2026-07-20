@@ -22,6 +22,7 @@ from twinmarket_kr.community.posting import posting_decision
 from twinmarket_kr.community.reading import community_reading_react, community_reading_select
 from twinmarket_kr.core.daily_cycle import run_agent_turn
 from twinmarket_kr.db.connection import connect, init_sim_db
+from twinmarket_kr.experiment_runtime import ParallelTaskError
 from twinmarket_kr.llm.client import OpenRouterClient, stable_llm_seed
 from twinmarket_kr.run_logger import SimulationLogger
 
@@ -538,8 +539,9 @@ async def _run_subturn(
         details = "; ".join(
             f"{type(error).__name__}: {error}" for error in turn_errors[:5]
         )
-        raise RuntimeError(
-            f"{len(turn_errors)} agent turn(s) failed after all parallel tasks settled: {details}"
+        raise ParallelTaskError(
+            f"{len(turn_errors)} agent turn(s) failed after all parallel tasks settled: {details}",
+            turn_errors,
         ) from turn_errors[0]
     turn_results = [result for result in parallel_results if isinstance(result, dict)]
     if len(turn_results) != len(agents):
@@ -736,8 +738,9 @@ async def post_trade_posting_phase(
         details = "; ".join(
             f"{type(error).__name__}: {error}" for error in posting_errors[:5]
         )
-        raise RuntimeError(
-            f"{len(posting_errors)} community posting call(s) failed: {details}"
+        raise ParallelTaskError(
+            f"{len(posting_errors)} community posting call(s) failed: {details}",
+            posting_errors,
         ) from posting_errors[0]
     generated_posts = [result for result in parallel_posts if isinstance(result, tuple)]
     if len(generated_posts) != len(active_results):
@@ -890,8 +893,9 @@ async def community_phase(
         details = "; ".join(
             f"{type(error).__name__}: {error}" for error in reading_errors[:5]
         )
-        raise RuntimeError(
-            f"{len(reading_errors)} community reading call(s) failed: {details}"
+        raise ParallelTaskError(
+            f"{len(reading_errors)} community reading call(s) failed: {details}",
+            reading_errors,
         ) from reading_errors[0]
     results = [result for result in parallel_reading if isinstance(result, tuple)]
     if len(results) != len(active_agents):

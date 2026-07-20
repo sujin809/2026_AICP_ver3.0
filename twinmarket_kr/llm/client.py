@@ -201,13 +201,28 @@ def _is_retryable_error(error: BaseException) -> bool:
         response = getattr(error, "response", None)
         status_code = getattr(response, "status_code", None)
     if status_code is None:
-        # Network, timeout, and transport exceptions are safe to retry because no
-        # simulation state is persisted until the response validates.
-        return True
+        # Only known network/transport failures are safe to retry. A local
+        # ValueError/TypeError or an unknown SDK failure will not improve by
+        # replaying the same request six times.
+        retryable_names = {
+            "APIConnectionError",
+            "APITimeoutError",
+            "ConnectError",
+            "ConnectTimeout",
+            "ConnectionError",
+            "NetworkError",
+            "ReadError",
+            "ReadTimeout",
+            "TimeoutError",
+        }
+        return (
+            isinstance(error, (TimeoutError, ConnectionError))
+            or type(error).__name__ in retryable_names
+        )
     try:
         code = int(status_code)
     except (TypeError, ValueError):
-        return True
+        return False
     return code in {408, 409, 429} or 500 <= code <= 599
 
 
@@ -288,18 +303,18 @@ async def _global_openrouter_slot(limit: int):
 
 def _offline_response(messages: list[dict[str, str]]) -> str:
     prompt = messages[-1].get("content", "") if messages else ""
-    if "selected_post_ids" in prompt:
-        limit_match = re.search(r"최대\s+(\d+)개", prompt)
-        limit = int(limit_match.group(1)) if limit_match else 3
-        post_ids = [int(value) for value in re.findall(r"post_id=(\d+)", prompt)]
-        return json.dumps({"selected_post_ids": post_ids[:limit]}, ensure_ascii=False)
-    if '"reactions"' in prompt:
+    if "[모드: react]" in prompt:
         post_ids = [int(value) for value in re.findall(r"post_id=(\d+)", prompt)]
         reactions = [
             {"post_id": post_id, "reaction": ("like" if index % 3 == 0 else "none")}
             for index, post_id in enumerate(post_ids)
         ]
         return json.dumps({"reactions": reactions}, ensure_ascii=False)
+    if "[모드: select]" in prompt:
+        limit_match = re.search(r"최대\s+(\d+)개", prompt)
+        limit = int(limit_match.group(1)) if limit_match else 3
+        post_ids = [int(value) for value in re.findall(r"post_id=(\d+)", prompt)]
+        return json.dumps({"selected_post_ids": post_ids[:limit]}, ensure_ascii=False)
     if "will_post" in prompt or "게시글 타입 6종" in prompt:
         return json.dumps(
             {
@@ -363,7 +378,7 @@ def _offline_response(messages: list[dict[str, str]]) -> str:
     if "작업 모드:\npost_search" in prompt:
         return json.dumps(
             {
-                "new_findings": "",
+                "new_findings": [],
                 "view_change": "유지",
                 "view_change_detail": "Offline smoke run did not add search results.",
                 "unresolved_questions": [],
@@ -373,8 +388,7 @@ def _offline_response(messages: list[dict[str, str]]) -> str:
     if "작업 모드:\npre_search" in prompt:
         return json.dumps(
             {
-                "search_needed": True,
-                "key_findings": "Offline smoke run checks the trailing news window.",
+                "key_findings": ["Offline smoke run checks the trailing news window."],
                 "curiosity_points": ["HBM demand", "exchange rate", "foreign flows"],
                 "search_rationale": "Verify the seven-day cutoff and search audit path.",
                 "search_keywords": ["HBM", "환율", "외국인"],

@@ -7,12 +7,17 @@ from typing import Any
 import config
 from twinmarket_kr.agents.memory_agent import MemoryAgent
 from twinmarket_kr.llm.client import OpenRouterClient, response_content, stable_llm_seed
+from twinmarket_kr.llm.validation import (
+    LLMValidationError,
+    build_validation_retry_prompt,
+    record_validation_failure,
+)
 
 
 BELIEF_KEYS = ("dim_1", "dim_2", "dim_3", "dim_4", "dim_5", "dim_6", "belief_summary", "view_change")
 
 
-class BeliefValidationError(RuntimeError):
+class BeliefValidationError(LLMValidationError):
     pass
 
 
@@ -110,20 +115,38 @@ async def update_belief(
         raise ValueError("validation_attempts must be at least 1")
     parsed: dict[str, str] | None = None
     invalid_history: list[list[str]] = []
+    current_prompt = prompt
     for attempt in range(1, validation_attempts + 1):
+        attempt_seed = stable_llm_seed(seed or 0, "belief_validation", attempt)
         response = await client.chat(
-            [{"role": "user", "content": prompt}],
+            [{"role": "user", "content": current_prompt}],
             response_format={"type": "json_object"},
             temperature=0.2 if attempt == 1 else 0.1,
-            seed=stable_llm_seed(seed or 0, "belief_validation", attempt),
+            seed=attempt_seed,
             audit_label="belief_update",
         )
-        candidate = parse_belief_json(response_content(response) or "{}")
+        raw_content = response_content(response) or "{}"
+        candidate = parse_belief_json(raw_content)
         errors = [key for key in BELIEF_KEYS if not candidate.get(key, "").strip()]
         if not errors:
             parsed = candidate
             break
         invalid_history.append(errors)
+        record_validation_failure(
+            label="belief_update",
+            attempt=attempt,
+            errors=[f"{key}:requires_nonempty_string" for key in errors],
+            raw_content=raw_content,
+            seed=attempt_seed,
+        )
+        current_prompt = build_validation_retry_prompt(
+            prompt,
+            errors=[f"{key}:requires_nonempty_string" for key in errors],
+            schema_hint=(
+                "dim_1부터 dim_6, belief_summary, view_change를 모두 "
+                "비어 있지 않은 문자열로 출력하세요."
+            ),
+        )
     if parsed is None:
         raise BeliefValidationError(
             "LLM did not produce a complete belief after "

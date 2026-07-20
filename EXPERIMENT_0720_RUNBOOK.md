@@ -55,7 +55,8 @@
 - 실험 내부 준비 concurrency: 30
 - 6개 실험 전체가 공유하는 실제 동시 API 호출 상한: 16
 - 429 및 timeout: 호출 단위 자동 재시도와 backoff
-- 프로세스 종료: 동일 조건 최대 5회 자동 재시작
+- timeout·연결 오류·408·409·429·5xx로 프로세스가 종료된 경우에만 동일 조건 최대 5회 자동 재시작
+- schema·모델 불일치·로컬 무결성 오류: 자동 반복하지 않고 pause
 - 각 재시작은 마지막으로 완료된 AM·PM·커뮤니티 체크포인트 이후부터 이어진다.
 
 전역 상한은 같은 컴퓨터에서 실행되는 모든 조건이 `outputs/.openrouter_slots`의 파일 잠금을 공유하여 적용한다. 6개 조건 각각 16개가 아니라 전체 합계가 16개다.
@@ -114,7 +115,13 @@ python3.12 scripts/07_prepare_fake_news_injection.py --variant both
 
 사람 검토 완료 자극물만 강제하려면 `--approved-only`를 사용한다. 현재 데이터에서는 승인 행이 없으므로 이 옵션은 의도적으로 실행을 중단한다. 재생성 후 생성된 상대경로 manifest와 출력 hash를 확인한 다음 5조건을 시작한다.
 
-## 8. 오늘 밤: C00 한 조건만 실행
+## 8. 2026-07-20 Depth 2 실패 run 처리
+
+기존 `outputs/logs/paper_0720/c00_commoff_fakeoff`는 수정 전 prompt·validator hash로 시작된 실패 run이다. 새 코드에서는 checkpoint signature가 달라 의도적으로 이어 실행할 수 없다. 사용자가 처음부터 다시 시작하기로 했으므로 이 폴더는 원인 감사용으로 보존하고, 새 실험은 아래의 `outputs/logs/paper_0720_v2`에서 시작한다. 과거 폴더를 새 폴더에 복사하거나 로그를 병합하지 않는다.
+
+실패 원인은 worker·API key·429가 아니라 `key_findings` 배열을 문자열 오류로 오판한 validator였다. 수정 후에는 Depth 2 pre/post 배열 스키마, pre/post prompt 분리, 오류 피드백, 별도 validation audit, deterministic 오류의 자동 재실행 차단이 적용된다.
+
+## 9. 오늘 밤: C00 한 조건만 실행
 
 먼저 위 6절의 clean base 생성 명령을 **한 번만** 실행한다. 그 다음 아래 명령으로 커뮤니티 off·가짜뉴스 off 기준조건만 실행한다.
 
@@ -123,16 +130,16 @@ python3.12 scripts/08_run_six_conditions.py \
   --start-date 2026-02-27 \
   --end-date 2026-06-01 \
   --chunk-days 1 \
-  --output-root outputs/logs/paper_0720 \
+  --output-root outputs/logs/paper_0720_v2 \
   --conditions c00_commoff_fakeoff
 ```
 
-일시적인 API/프로세스 오류는 최대 5회 자동 재시작하며, 그래도 중단되면 **완전히 같은 명령**을 다시 실행한다. 마지막으로 완료된 AM·PM·community 완료 지점 이후부터 재개한다. community off의 community phase는 DB를 바꾸지 않는 완료 경계다. 같은 출력 경로를 두 프로세스가 동시에 실행하면 runner lock이 두 번째 실행을 차단한다.
+일시적인 API 오류는 최대 5회 자동 재시작하며, 그래도 중단되면 **완전히 같은 명령**을 다시 실행한다. 마지막으로 완료된 AM·PM·community 완료 지점 이후부터 재개한다. validation·모델 불일치·로컬 무결성 오류는 같은 요청을 반복하지 않고 `paused.json`에 `auto_restart_allowed=false`를 남긴다. community off의 community phase는 DB를 바꾸지 않는 완료 경계다. 같은 출력 경로를 두 프로세스가 동시에 실행하면 runner lock이 두 번째 실행을 차단한다.
 
 오늘 밤 실행이 끝났는지는 아래 두 파일로 확인한다.
 
-- `outputs/logs/paper_0720/c00_commoff_fakeoff/run_complete.json`
-- `outputs/logs/paper_0720/c00_commoff_fakeoff/run_metadata.json`
+- `outputs/logs/paper_0720_v2/c00_commoff_fakeoff/run_complete.json`
+- `outputs/logs/paper_0720_v2/c00_commoff_fakeoff/run_metadata.json`
 
 `run_complete.json`이 없으면 완료로 간주하지 않는다.
 
@@ -140,24 +147,24 @@ C00 하나만 완료된 상태에서도 일반 실행 PDF는 만들 수 있다. 
 
 ```bash
 python3.12 scripts/generate_run_report_pdf.py \
-  --run-dir outputs/logs/paper_0720/c00_commoff_fakeoff \
-  --output outputs/logs/paper_0720/c00_commoff_fakeoff/run_report.pdf
+  --run-dir outputs/logs/paper_0720_v2/c00_commoff_fakeoff \
+  --output outputs/logs/paper_0720_v2/c00_commoff_fakeoff/run_report.pdf
 ```
 
 이 PDF는 C00 자체의 거래·belief·수익률 실행 보고서다. 조건 간 효과 비교 보고서는 나머지 5개 조건까지 완료된 뒤 생성해야 한다. C00에서는 community·fake 전용 보고서가 비어 있는 것이 정상이다.
 
 C00이 미완료라면 내일 5조건 명령을 먼저 실행하지 말고, 위 C00 명령을 그대로 다시 실행해 완료한다. launcher가 미완료 C00을 발견하면 다른 처치 실행을 차단한다.
 
-## 9. 내일: C00을 제외한 나머지 5조건 실행
+## 10. 내일: C00을 제외한 나머지 5조건 실행
 
-오늘 만든 `outputs/experiment_base_sim.db`와 `outputs/logs/paper_0720`을 삭제하거나 다시 만들지 않는다. 아래 명령은 C00을 재실행하지 않고 나머지 다섯 조건만 시작한다.
+오늘 만든 `outputs/experiment_base_sim.db`와 `outputs/logs/paper_0720_v2`를 삭제하거나 다시 만들지 않는다. 아래 명령은 C00을 재실행하지 않고 나머지 다섯 조건만 시작한다.
 
 ```bash
 python3.12 scripts/08_run_six_conditions.py \
   --start-date 2026-02-27 \
   --end-date 2026-06-01 \
   --chunk-days 1 \
-  --output-root outputs/logs/paper_0720 \
+  --output-root outputs/logs/paper_0720_v2 \
   --conditions \
     c10_common_fakeoff \
     c01_commoff_bearish \
@@ -176,17 +183,20 @@ python3.12 scripts/08_run_six_conditions.py \
 
 하나라도 다르면 나머지 실험을 시작하지 않는다. 일시적 API 오류로 프로세스가 종료되면 조건별로 최대 5회 재시작하며, 컴퓨터 전체가 종료되면 위 명령을 그대로 다시 실행한다.
 
-## 10. 실행 중 확인할 파일
+## 11. 실행 중 확인할 파일
 
-- 전체 상태: `outputs/logs/paper_0720/matrix_manifest.json`
-- 조건별 실시간 누적 콘솔: `outputs/logs/paper_0720/<condition>.console.log`
-- 조건별 체크포인트: `outputs/logs/paper_0720/<condition>/checkpoint.json`
-- 일시정지 원인: `outputs/logs/paper_0720/<condition>/paused.json`
-- API 감사: `outputs/logs/paper_0720/<condition>/openrouter_calls.jsonl`
+- 전체 상태: `outputs/logs/paper_0720_v2/matrix_manifest.json`
+- 조건별 실시간 누적 콘솔: `outputs/logs/paper_0720_v2/<condition>.console.log`
+- 조건별 체크포인트: `outputs/logs/paper_0720_v2/<condition>/checkpoint.json`
+- 일시정지 원인: `outputs/logs/paper_0720_v2/<condition>/paused.json`
+- API 감사: `outputs/logs/paper_0720_v2/<condition>/openrouter_calls.jsonl`
+- 모델 출력 검증 실패 감사: `outputs/logs/paper_0720_v2/<condition>/llm_validation_errors.jsonl`
 
 API 감사 로그에는 원문 API key를 기록하지 않는다. model, provider, request ID, seed, 호출 단계, 재시도 횟수, latency, token usage, prompt hash를 기록한다.
 
-## 11. 완료 판정
+validation 감사 로그에는 실패 label, attempt, seed, validation 오류, response hash와 최대 2KB 응답 excerpt만 기록한다. 전체 prompt와 API key는 기록하지 않는다. 파일이 없으면 모든 모델 응답이 첫 시도에 schema를 통과했다는 뜻이다.
+
+## 12. 완료 판정
 
 조건 하나는 다음을 모두 만족해야 `complete`가 된다.
 
@@ -202,7 +212,7 @@ API 감사 로그에는 원문 API key를 기록하지 않는다. model, provide
 - community-on 조건의 날짜별 참여 로그 완전성
 - 조건별 입력 파일·프롬프트·코드·base DB hash 일치
 
-## 12. 1주 주문 분석
+## 13. 1주 주문 분석
 
 정상 LLM이 선택한 1주 주문은 허용한다. 다음을 구분해 기록한다.
 
@@ -213,7 +223,7 @@ API 감사 로그에는 원문 API key를 기록하지 않는다. model, provide
 
 논문 분석에서는 전체 주문, 1주 제외, 거래가치 가중 결과를 함께 비교한다.
 
-## 13. 재사용 가능한 belief 분석 문서
+## 14. 재사용 가능한 belief 분석 문서
 
 다른 조건에도 같은 방식으로 적용할 분석 정의는 다음 문서에 유지한다.
 

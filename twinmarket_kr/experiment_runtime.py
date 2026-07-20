@@ -20,6 +20,101 @@ RUNTIME_TABLES = (
     "community_logs",
 )
 
+DETERMINISTIC_FAILURE_NAMES = (
+    "AnalysisValidationError",
+    "BeliefValidationError",
+    "CommunityValidationError",
+    "DecisionConstraintError",
+    "DecisionValidationError",
+    "LLMValidationError",
+    "UnexpectedModelError",
+)
+
+
+class ParallelTaskError(RuntimeError):
+    """Preserve every child failure so restart classification cannot miss a mixed error."""
+
+    def __init__(self, message: str, errors: list[BaseException]) -> None:
+        super().__init__(message)
+        self.errors = tuple(errors)
+
+
+def _exception_chain(error: BaseException) -> list[BaseException]:
+    chain: list[BaseException] = []
+    seen: set[int] = set()
+    pending: list[BaseException] = [error]
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        chain.append(current)
+        seen.add(id(current))
+        nested = getattr(current, "errors", ())
+        if isinstance(nested, (tuple, list)):
+            pending.extend(item for item in nested if isinstance(item, BaseException))
+        if current.__context__ is not None:
+            pending.append(current.__context__)
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+    return chain
+
+
+def classify_restart_safety(error: BaseException) -> dict[str, Any]:
+    """Permit process restarts only for clearly transient provider/transport failures."""
+    chain = _exception_chain(error)
+    chain_types = [type(item).__name__ for item in chain]
+    combined_text = "\n".join(f"{type(item).__name__}: {item}" for item in chain)
+    deterministic = sorted(
+        name for name in DETERMINISTIC_FAILURE_NAMES if name in combined_text
+    )
+    if deterministic:
+        return {
+            "auto_restart_allowed": False,
+            "failure_class": "deterministic_validation_or_model",
+            "exception_chain": chain_types,
+            "matched_markers": deterministic,
+        }
+
+    transient_markers: list[str] = []
+    transient_type_names = {
+        "APIConnectionError",
+        "APITimeoutError",
+        "ConnectError",
+        "ConnectTimeout",
+        "ConnectionError",
+        "NetworkError",
+        "ReadError",
+        "ReadTimeout",
+        "TimeoutError",
+    }
+    for item in chain:
+        item_type = type(item).__name__
+        if item_type in transient_type_names or isinstance(item, TimeoutError):
+            transient_markers.append(item_type)
+        status_code = getattr(item, "status_code", None)
+        if status_code is None:
+            response = getattr(item, "response", None)
+            status_code = getattr(response, "status_code", None)
+        try:
+            code = int(status_code) if status_code is not None else None
+        except (TypeError, ValueError):
+            code = None
+        if code in {408, 409, 429} or (code is not None and 500 <= code <= 599):
+            transient_markers.append(f"http_{code}")
+    if transient_markers:
+        return {
+            "auto_restart_allowed": True,
+            "failure_class": "transient_provider_or_transport",
+            "exception_chain": chain_types,
+            "matched_markers": sorted(set(transient_markers)),
+        }
+    return {
+        "auto_restart_allowed": False,
+        "failure_class": "unknown_or_local_error",
+        "exception_chain": chain_types,
+        "matched_markers": [],
+    }
+
 
 def file_sha256(path: Path | str) -> str:
     digest = hashlib.sha256()

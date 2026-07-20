@@ -84,6 +84,17 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     temporary.replace(path)
 
 
+def _file_fingerprint(path: Path) -> tuple[int, int, str] | None:
+    if not path.exists():
+        return None
+    stat = path.stat()
+    return (
+        stat.st_size,
+        stat.st_mtime_ns,
+        hashlib.sha256(path.read_bytes()).hexdigest(),
+    )
+
+
 def _tree_hash(paths: list[Path]) -> str:
     digest = hashlib.sha256()
     for path in paths:
@@ -245,7 +256,13 @@ async def _run_condition(
             command.extend(["--fake-news-variant", fake_news_variant])
         return_code = 1
         launch_attempt = 0
+        restart_decision: dict[str, Any] = {
+            "auto_restart_allowed": False,
+            "failure_class": "not_evaluated",
+        }
         for launch_attempt in range(1, args.max_process_restarts + 2):
+            paused_path = run_dir / "paused.json"
+            paused_before = _file_fingerprint(paused_path)
             with console_log.open("a", encoding="utf-8") as console_handle:
                 console_handle.write(
                     f"\n[launch_attempt={launch_attempt} started_at={datetime.now().isoformat()}]\n"
@@ -279,6 +296,48 @@ async def _run_condition(
             return_code = int(process.returncode or 0)
             if return_code == 0:
                 break
+            paused_after = _file_fingerprint(paused_path)
+            if paused_after is not None and paused_after != paused_before:
+                try:
+                    paused_payload = json.loads(paused_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    restart_decision = {
+                        "auto_restart_allowed": False,
+                        "failure_class": "invalid_paused_metadata",
+                        "error": str(exc),
+                    }
+                else:
+                    restart_decision = {
+                        "auto_restart_allowed": paused_payload.get("auto_restart_allowed") is True,
+                        "failure_class": paused_payload.get("failure_class", "unspecified"),
+                        "matched_markers": paused_payload.get("matched_markers") or [],
+                    }
+            else:
+                checkpoint_path = run_dir / "checkpoint.json"
+                try:
+                    checkpoint_payload = (
+                        json.loads(checkpoint_path.read_text(encoding="utf-8"))
+                        if checkpoint_path.exists()
+                        else {}
+                    )
+                except (OSError, json.JSONDecodeError):
+                    checkpoint_payload = {}
+                interrupted_phase = checkpoint_payload.get("inflight_phase")
+                restart_decision = {
+                    "auto_restart_allowed": bool(interrupted_phase),
+                    "failure_class": (
+                        "interrupted_inflight_process"
+                        if interrupted_phase
+                        else "no_new_paused_metadata"
+                    ),
+                    "failed_phase": (
+                        interrupted_phase.get("phase_key")
+                        if isinstance(interrupted_phase, dict)
+                        else None
+                    ),
+                }
+            if restart_decision["auto_restart_allowed"] is not True:
+                break
             if launch_attempt <= args.max_process_restarts:
                 await asyncio.sleep(args.restart_delay_seconds)
         return {
@@ -289,6 +348,7 @@ async def _run_condition(
             "return_code": return_code,
             "status": "complete" if return_code == 0 else "paused_or_failed",
             "launch_attempts": launch_attempt,
+            "restart_decision": restart_decision,
             "run_dir": str(run_dir),
             "console_log": str(console_log),
         }

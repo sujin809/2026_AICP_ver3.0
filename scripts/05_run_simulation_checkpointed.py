@@ -24,6 +24,7 @@ import config
 from twinmarket_kr.experiment_runtime import (
     backup_database,
     build_clean_experiment_base,
+    classify_restart_safety,
     file_sha256,
     validate_clean_experiment_base,
 )
@@ -33,6 +34,7 @@ from twinmarket_kr.run_integrity import (
     validate_log_bundle,
     validate_news_inputs,
 )
+from twinmarket_kr.llm.validation import summarize_validation_audit
 from twinmarket_kr.simulation import run_simulation, select_simulation_agents, trading_dates_between
 
 
@@ -498,11 +500,16 @@ async def _run(args: argparse.Namespace) -> None:
                 except Exception as exc:
                     _restore_database(snapshot, runtime_db)
                     _restore_log_state(chunk_dir, log_state)
+                    restart_safety = classify_restart_safety(exc)
                     checkpoint.pop("inflight_phase", None)
                     checkpoint["status"] = "paused"
                     checkpoint["failed_chunk"] = index
                     checkpoint["failed_phase"] = phase_key
-                    checkpoint["last_error"] = {"type": type(exc).__name__, "message": str(exc)}
+                    checkpoint["last_error"] = {
+                        "type": type(exc).__name__,
+                        "message": str(exc),
+                        **restart_safety,
+                    }
                     _write_json(checkpoint_path, checkpoint)
                     _write_json(
                         run_dir / "paused.json",
@@ -513,6 +520,7 @@ async def _run(args: argparse.Namespace) -> None:
                             "restart_command": "rerun the identical command to resume",
                             "error_type": type(exc).__name__,
                             "error": str(exc),
+                            **restart_safety,
                         },
                     )
                     raise
@@ -582,10 +590,22 @@ async def _run(args: argparse.Namespace) -> None:
         expected_turn=len(dates) * 2,
         phase="run complete",
     )
-    api_audit_summary = summarize_api_audit(
-        config.OPENROUTER_AUDIT_LOG,
-        expected_model=config.PAPER_OPENROUTER_MODEL,
-    )
+    offline_llm = os.getenv("TWINMARKET_OFFLINE_LLM", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    if offline_llm:
+        api_audit_summary = {
+            "api_audit_mode": "offline_stub",
+            "api_audit_count": 0,
+            "api_audit_path": str(config.OPENROUTER_AUDIT_LOG),
+        }
+    else:
+        api_audit_summary = summarize_api_audit(
+            config.OPENROUTER_AUDIT_LOG,
+            expected_model=config.PAPER_OPENROUTER_MODEL,
+        )
     metadata = {
         **signature_payload,
         "run_id": run_dir.name,
@@ -607,6 +627,7 @@ async def _run(args: argparse.Namespace) -> None:
         "integrity": final_integrity,
         "news_input_audit": news_input_audit,
         **api_audit_summary,
+        **summarize_validation_audit(),
         "final_state_sha256": final_digest,
     }
     _write_json(run_dir / "run_metadata.json", metadata)

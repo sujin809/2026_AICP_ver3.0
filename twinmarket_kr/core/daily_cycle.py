@@ -89,7 +89,7 @@ async def run_agent_turn(
         )
         search_results = []
         post_search = {
-            "new_findings": "",
+            "new_findings": [],
             "view_change": "유지",
             "view_change_detail": "추가 검색을 수행하지 않았습니다.",
             "unresolved_questions": [],

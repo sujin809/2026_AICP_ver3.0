@@ -3,9 +3,11 @@ from __future__ import annotations
 from typing import Any
 
 import config
+from twinmarket_kr.community.validation import CommunityValidationError
 from twinmarket_kr.llm.analysis import parse_json_loose
 from twinmarket_kr.llm.belief import load_prompt
 from twinmarket_kr.llm.client import OpenRouterClient, response_content, stable_llm_seed
+from twinmarket_kr.llm.validation import build_validation_retry_prompt, record_validation_failure
 
 
 POST_TYPES = {"impression", "question", "trade_share", "profit_share", "analysis", "column"}
@@ -49,16 +51,19 @@ async def posting_decision(
         post_types_guide=POST_TYPES_GUIDE,
     )
     raw: dict[str, Any] = {}
+    current_prompt = prompt
     for attempt in range(1, 5):
+        attempt_seed = stable_llm_seed(seed or 0, "community_posting_validation", attempt)
         response = await client.chat(
-            [{"role": "user", "content": prompt}],
+            [{"role": "user", "content": current_prompt}],
             model=config.OPENROUTER_COMMUNITY_MODEL,
             temperature=0.7 if attempt == 1 else 0.3,
             response_format={"type": "json_object"},
-            seed=stable_llm_seed(seed or 0, "community_posting_validation", attempt),
+            seed=attempt_seed,
             audit_label="community_posting",
         )
-        raw = parse_json_loose(response_content(response) or "{}")
+        raw_content = response_content(response) or "{}"
+        raw = parse_json_loose(raw_content)
         if isinstance(raw.get("will_post"), bool) and (
             not raw["will_post"]
             or (
@@ -68,8 +73,27 @@ async def posting_decision(
             )
         ):
             break
+        errors = _posting_errors(raw)
+        record_validation_failure(
+            label="community_posting",
+            attempt=attempt,
+            errors=errors,
+            raw_content=raw_content,
+            seed=attempt_seed,
+        )
+        current_prompt = build_validation_retry_prompt(
+            prompt,
+            errors=errors,
+            schema_hint=(
+                '{"will_post": boolean, "post_type": "impression|question|trade_share|'
+                'profit_share|analysis|column", "title": string, "content": string}. '
+                "will_post가 false이면 나머지 문자열은 비어 있어도 됩니다."
+            ),
+        )
     else:
-        raise RuntimeError("community posting did not return a valid decision after 4 attempts")
+        raise CommunityValidationError(
+            "community posting did not return a valid decision after 4 attempts"
+        )
     if raw["will_post"] is False:
         return None
     title = str(raw.get("title") or "").strip()
@@ -78,5 +102,20 @@ async def posting_decision(
         return None
     post_type = str(raw.get("post_type") or "impression").strip()
     if post_type not in POST_TYPES:
-        raise RuntimeError(f"invalid community post type after validation: {post_type}")
+        raise CommunityValidationError(f"invalid community post type after validation: {post_type}")
     return {"will_post": True, "post_type": post_type, "title": title, "content": content}
+
+
+def _posting_errors(raw: dict[str, Any]) -> list[str]:
+    if not isinstance(raw.get("will_post"), bool):
+        return ["will_post:requires_boolean"]
+    if raw["will_post"] is False:
+        return []
+    errors: list[str] = []
+    if str(raw.get("post_type") or "").strip() not in POST_TYPES:
+        errors.append("post_type:invalid")
+    if not str(raw.get("title") or "").strip():
+        errors.append("title:requires_nonempty_string")
+    if not str(raw.get("content") or "").strip():
+        errors.append("content:requires_nonempty_string")
+    return errors
