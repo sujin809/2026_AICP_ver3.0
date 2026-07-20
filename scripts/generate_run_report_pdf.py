@@ -360,7 +360,9 @@ def main() -> None:
     meta["agent_ids"] = agent_ids
     meta.setdefault("agent_count", len(agent_ids))
     meta.setdefault("date_count", len({row.get("date") for row in daily_rows if row.get("date")}))
-    meta.setdefault("random_seed", "N/A")
+    # Paper checkpoint runs store the field as `seed`; legacy runs used
+    # `random_seed`. Preserve both formats in the report.
+    meta.setdefault("random_seed", meta.get("seed", "N/A"))
     if not meta.get("agent_depths"):
         meta["agent_depths"] = {
             str((row.get("agent") or {}).get("agent_id")): int((row.get("agent") or {}).get("news_depth", 0))

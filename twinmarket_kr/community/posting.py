@@ -5,7 +5,7 @@ from typing import Any
 import config
 from twinmarket_kr.llm.analysis import parse_json_loose
 from twinmarket_kr.llm.belief import load_prompt
-from twinmarket_kr.llm.client import OpenRouterClient, response_content
+from twinmarket_kr.llm.client import OpenRouterClient, response_content, stable_llm_seed
 
 
 POST_TYPES = {"impression", "question", "trade_share", "profit_share", "analysis", "column"}
@@ -28,6 +28,7 @@ async def posting_decision(
     date: str,
     execution_summary: dict[str, Any] | None = None,
     client: OpenRouterClient | None = None,
+    seed: int | None = None,
 ) -> dict[str, Any] | None:
     client = client or OpenRouterClient()
     prompt_template = load_prompt("posting_decision.txt")
@@ -47,14 +48,29 @@ async def posting_decision(
         date=date,
         post_types_guide=POST_TYPES_GUIDE,
     )
-    response = await client.chat(
-        [{"role": "user", "content": prompt}],
-        model=config.OPENROUTER_COMMUNITY_MODEL,
-        temperature=0.7,
-        response_format={"type": "json_object"},
-    )
-    raw = parse_json_loose(response_content(response) or "{}")
-    if not raw.get("will_post", False):
+    raw: dict[str, Any] = {}
+    for attempt in range(1, 5):
+        response = await client.chat(
+            [{"role": "user", "content": prompt}],
+            model=config.OPENROUTER_COMMUNITY_MODEL,
+            temperature=0.7 if attempt == 1 else 0.3,
+            response_format={"type": "json_object"},
+            seed=stable_llm_seed(seed or 0, "community_posting_validation", attempt),
+            audit_label="community_posting",
+        )
+        raw = parse_json_loose(response_content(response) or "{}")
+        if isinstance(raw.get("will_post"), bool) and (
+            not raw["will_post"]
+            or (
+                str(raw.get("post_type") or "").strip() in POST_TYPES
+                and str(raw.get("title") or "").strip()
+                and str(raw.get("content") or "").strip()
+            )
+        ):
+            break
+    else:
+        raise RuntimeError("community posting did not return a valid decision after 4 attempts")
+    if raw["will_post"] is False:
         return None
     title = str(raw.get("title") or "").strip()
     content = str(raw.get("content") or "").strip()
@@ -62,5 +78,5 @@ async def posting_decision(
         return None
     post_type = str(raw.get("post_type") or "impression").strip()
     if post_type not in POST_TYPES:
-        post_type = "impression"
+        raise RuntimeError(f"invalid community post type after validation: {post_type}")
     return {"will_post": True, "post_type": post_type, "title": title, "content": content}

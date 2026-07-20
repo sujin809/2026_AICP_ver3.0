@@ -39,7 +39,7 @@
 - allowed_actions가 ["sell"]이면 반드시 sell을 선택해야 합니다.
 - allowed_actions가 ["buy", "sell"]이면 buy 또는 sell 중 하나를 선택하세요.
 - action에 "hold", 빈 문자열, null, allowed_actions 밖의 값은 절대 출력하지 마세요.
-- 판단이 어렵더라도 allowed_actions의 첫 번째 값을 action으로 선택하세요.
+- 판단이 어렵더라도 근거와 불확실성을 reason에 명시한 뒤 allowed_actions 안에서 방향을 선택하세요.
 
 【Step 2: 거래 가능 범위 확인 — 얼마나 거래할 수 있는가?】
 거래 제약을 확인하여 가능한 수량 범위 안에서 수량을 정하세요.
@@ -48,7 +48,7 @@
 - sell 선택 시 quantity는 max_sell_quantity를 초과할 수 없습니다.
 - 거래 수수료는 없으며, 매수/매도 금액은 announced_price * quantity로 계산됩니다.
 - quantity에 0, 빈 값, null, 음수, 문자열은 절대 출력하지 마세요.
-- 수량 판단이 어렵다면 1을 선택하세요. 단, 허용 최대 수량이 1보다 작으면 해당 action은 선택하지 마세요.
+- 수량은 포트폴리오 제약과 명시한 리스크 관리 방침을 반영해 의도적으로 선택하세요.
 
 【Step 3: 최종 결정】
 Step 1의 방향과 Step 2의 수량을 종합하여 최종 action, quantity, reason, risk_control을 정하세요.

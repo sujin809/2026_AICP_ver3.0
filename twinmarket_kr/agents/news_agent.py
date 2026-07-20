@@ -336,7 +336,13 @@ class NewsAgent:
         self._processed = self._filter_fake_rows(self._load_csv(self.processed_csv_path))
         self._daily = self._filter_fake_rows(self._load_csv(self.daily_csv_path))
         self._by_id = {row["id"]: row for row in self._processed}
-        self._by_title = {row["title"]: row for row in self._processed}
+        self._by_title_all: dict[str, list[dict[str, str]]] = defaultdict(list)
+        for row in self._processed:
+            self._by_title_all[str(row["title"])].append(row)
+        self._by_title = {
+            title: sorted(rows, key=lambda item: str(item.get("id") or ""))[0]
+            for title, rows in self._by_title_all.items()
+        }
 
     def _filter_fake_rows(self, rows: list[dict[str, str]]) -> list[dict[str, str]]:
         if self.include_fake_news:
@@ -441,6 +447,7 @@ class NewsAgent:
         *,
         keywords: list[str],
         current_date: str,
+        as_of_time: str = "23:59",
         window_start_date: str | None = None,
         window_start_time: str | None = None,
         window_end_date: str | None = None,
@@ -451,25 +458,17 @@ class NewsAgent:
         normalized_keywords = [str(keyword).strip() for keyword in keywords if str(keyword).strip()]
         if not normalized_keywords:
             return []
-        if window_start_date and window_start_time and window_end_date and window_end_time:
-            candidates = [
-                row
-                for row in self._processed
-                if _in_datetime_window(
-                    row,
-                    start_date=window_start_date,
-                    start_time=window_start_time,
-                    end_date=window_end_date,
-                    end_time=window_end_time,
-                    include_start=True,
-                )
-            ]
-        else:
-            end = _parse_date(current_date)
-            start = end - timedelta(days=lookback_days - 1)
-            candidates = [
-                row for row in self._processed if start <= _parse_date(row["date"]) <= end
-            ]
+        # Depth 2 always searches the trailing lookback window as of the decision
+        # cutoff. The feed's AM/PM window must not narrow this search to one subturn.
+        end_dt = _combine_datetime(window_end_date or current_date, window_end_time or as_of_time)
+        if end_dt is None:
+            raise ValueError("Depth 2 search requires a valid as-of date and time")
+        start_dt = end_dt - timedelta(days=lookback_days)
+        candidates = []
+        for row in self._processed:
+            row_dt = _combine_datetime(str(row.get("date", "")), str(row.get("time", "")))
+            if row_dt is not None and start_dt < row_dt <= end_dt:
+                candidates.append(row)
         scored: list[tuple[float, dict[str, str]]] = []
         for row in candidates:
             search_summary = row.get("search_summary") or row.get("summary", "")
@@ -479,12 +478,6 @@ class NewsAgent:
             score = title_hits * 2.0 + body_hits
             if score > 0:
                 scored.append((score, row))
-        seen_ids = {row["id"] for _, row in scored}
-        if len(scored) < top_n:
-            for row in candidates:
-                if row["id"] not in seen_ids:
-                    scored.append((0.0, row))
-                    seen_ids.add(row["id"])
         scored.sort(key=lambda item: (-item[0], -_parse_date(item[1]["date"]).toordinal(), item[1]["title"]))
         return [_public_search_item(row, score) for score, row in scored[:top_n]]
 
@@ -563,6 +556,12 @@ class NewsAgent:
 
         expanded = dict(base_context)
         expanded["read_contents"] = read_contents
+        expanded["visible_news_ids"] = [
+            str(row.get("id")) for row in daily_titles if row.get("id")
+        ]
+        expanded["read_news_ids"] = [
+            str(row.get("id")) for row in read_contents if row.get("id")
+        ]
         expanded.setdefault("search_results", {})
         expanded.setdefault("search_read_contents", [])
         return expanded
@@ -635,29 +634,80 @@ class NewsAgent:
             for news_id, row in sorted(items_by_id.items(), key=lambda item: item[0])
         ]
         fake_ids = [item["id"] for item in items]
+        fake_base_count = self._fake_count(base_ids)
+        fake_read_count = self._fake_count(read_ids)
+        fake_search_count = self._fake_count(search_ids)
+        fake_selected_count = self._fake_count(selected_ids)
         return {
             "fake_exposed": bool(items),
-            "fake_base_count": self._fake_count(base_ids),
-            "fake_read_count": self._fake_count(read_ids),
-            "fake_search_count": self._fake_count(search_ids),
-            "fake_selected_count": self._fake_count(selected_ids),
+            # Explicit stages: visible/read are assignment and feed contact;
+            # search/influential are post-exposure mechanisms.
+            "fake_visible": fake_base_count > 0,
+            "fake_read": fake_read_count > 0,
+            "fake_searched": fake_search_count > 0,
+            "fake_influential": fake_selected_count > 0,
+            "fake_base_count": fake_base_count,
+            "fake_read_count": fake_read_count,
+            "fake_search_count": fake_search_count,
+            "fake_selected_count": fake_selected_count,
             "fake_public_ids": fake_ids,
             "fake_synthetic_ids": [item.get("synthetic_id", "") for item in items if item.get("synthetic_id")],
             "fake_related_events": [item.get("related_event", "") for item in items if item.get("related_event")],
             "items": items,
         }
 
+    def normalize_influential_news(
+        self,
+        selected_news: list[Any],
+        news_context: dict[str, Any],
+    ) -> tuple[list[dict[str, str]], list[str]]:
+        """Resolve LLM influence references only against news actually available this turn."""
+        allowed_ids = set(self._ids_from_items(news_context.get("daily_titles") or []))
+        allowed_ids.update(self._ids_from_items(news_context.get("read_contents") or []))
+        allowed_ids.update(self._ids_from_items(news_context.get("search_read_contents") or []))
+        resolved: list[dict[str, str]] = []
+        unresolved: list[str] = []
+        seen: set[str] = set()
+        for item in selected_news:
+            raw_id = str(item.get("id") or "").strip() if isinstance(item, dict) else ""
+            raw_title = (
+                str(item.get("title") or "").strip()
+                if isinstance(item, dict)
+                else str(item).strip()
+            )
+            row = self._by_id.get(raw_id) if raw_id else None
+            if row is None and raw_title:
+                title_candidates = [
+                    candidate
+                    for candidate in self._by_title_all.get(raw_title, [])
+                    if str(candidate.get("id") or "") in allowed_ids
+                ]
+                row = (
+                    sorted(title_candidates, key=lambda item: str(item.get("id") or ""))[0]
+                    if title_candidates
+                    else None
+                )
+            if row is None or str(row.get("id") or "") not in allowed_ids:
+                unresolved.append(raw_id or raw_title)
+                continue
+            news_id = str(row["id"])
+            if news_id in seen:
+                continue
+            seen.add(news_id)
+            resolved.append(_public_title_item(row, include_time=True))
+        return resolved, unresolved
+
     @staticmethod
     def _normalize_selected_news(selected_news: list[Any]) -> tuple[list[str], list[str]]:
         ids: list[str] = []
         titles: list[str] = []
-        for item in selected_news[:3]:
+        for item in selected_news:
             if isinstance(item, dict):
                 raw_id = item.get("id")
                 raw_title = item.get("title")
                 if raw_id:
                     ids.append(str(raw_id))
-                if raw_title:
+                elif raw_title:
                     titles.append(str(raw_title))
             else:
                 text = str(item).strip()
@@ -667,7 +717,7 @@ class NewsAgent:
                     ids.append(text)
                 else:
                     titles.append(text)
-        return ids, titles
+        return list(dict.fromkeys(ids)), list(dict.fromkeys(titles))
 
     @staticmethod
     def _ids_from_items(items: Any) -> list[str]:

@@ -3,4 +3,16 @@ __pycache__/
 *.pyc
 *.sqlite
 *.sqlite3
+*.db-wal
+*.db-shm
+*.db.tmp
+*.db.lock
+*.runner.lock
+*.matrix.lock
 .DS_Store
+data/simulation.db
+outputs/analysis/
+outputs/experiment_base_sim.db
+outputs/experiment_base_sim.report.json
+outputs/.openrouter_slots/
+outputs/logs/paper_*/

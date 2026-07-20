@@ -22,7 +22,7 @@ from twinmarket_kr.community.posting import posting_decision
 from twinmarket_kr.community.reading import community_reading_react, community_reading_select
 from twinmarket_kr.core.daily_cycle import run_agent_turn
 from twinmarket_kr.db.connection import connect, init_sim_db
-from twinmarket_kr.llm.client import OpenRouterClient
+from twinmarket_kr.llm.client import OpenRouterClient, stable_llm_seed
 from twinmarket_kr.run_logger import SimulationLogger
 
 
@@ -111,6 +111,15 @@ def _acquire_sim_db_lock(sim_db_path: Path) -> Any:
     return lock_file
 
 
+def select_simulation_agents(max_agents: int | None = None) -> list[dict[str, Any]]:
+    """Return the deterministic agent cohort used by the simulation."""
+    all_agents = load_agents_from_sys100(config.SYS_100_DB)
+    if max_agents is None:
+        return all_agents
+    agents = all_agents[:max_agents]
+    return _ensure_depth2_agent(agents, all_agents)
+
+
 async def run_simulation(
     *,
     max_agents: int | None = None,
@@ -128,8 +137,12 @@ async def run_simulation(
     community_mode: str | None = None,
     sim_db: Path | str | None = None,
     reset_runtime_tables: bool = True,
+    turn_offset: int = 0,
+    day_offset: int = 0,
     log_root: Path | str | None = None,
     log_run_id: str | None = None,
+    phases: tuple[str, ...] | None = None,
+    append_existing_logs: bool = False,
 ) -> None:
     if information_mode not in {"pre_close_cutoff", "same_day", "prior_close"}:
         raise ValueError("information_mode must be 'pre_close_cutoff', 'same_day', or 'prior_close'")
@@ -143,16 +156,22 @@ async def run_simulation(
         community_mode = "on" if config.ENABLE_COMMUNITY else "off"
     if community_mode not in {"off", "on"}:
         raise ValueError("community_mode must be 'off' or 'on'")
+    if turn_offset < 0 or day_offset < 0:
+        raise ValueError("turn_offset and day_offset must be non-negative")
+    if turn_offset != day_offset * 2:
+        raise ValueError("turn_offset must equal day_offset * 2 for the two-turn daily cycle")
+    requested_phases = phases or ("am", "pm", "community")
+    phase_order = {"am": 0, "pm": 1, "community": 2}
+    if not requested_phases or any(phase not in phase_order for phase in requested_phases):
+        raise ValueError("phases must contain am, pm, and/or community")
+    if list(requested_phases) != sorted(requested_phases, key=phase_order.__getitem__):
+        raise ValueError("phases must be ordered as am, pm, community")
     processed_news_path = Path(processed_news_csv) if processed_news_csv else config.PROCESSED_NEWS_CSV
     daily_news_path = Path(daily_news_csv) if daily_news_csv else config.DAILY_NEWS_SELECTION_CSV
     concurrency = config.SIMULATION_CONCURRENCY
     sim_db_path = _prepare_sim_db(sim_db)
     _sim_db_lock = _acquire_sim_db_lock(sim_db_path)
-    agents = load_agents_from_sys100(config.SYS_100_DB)
-    if max_agents:
-        all_agents = agents
-        agents = agents[:max_agents]
-        agents = _ensure_depth2_agent(agents, all_agents)
+    agents = select_simulation_agents(max_agents)
     previous_by_date = _previous_date_map(sim_db_path)
     uses_previous_market = information_mode in {"pre_close_cutoff", "prior_close"}
     date_limit = None if max_days is None else max_days + (1 if uses_previous_market else 0)
@@ -169,6 +188,8 @@ async def run_simulation(
             dates = dates[:max_days]
     if not dates:
         raise RuntimeError("No StockData rows found. Run scripts/03_load_stock_data.py first.")
+    if requested_phases != ("am", "pm", "community") and len(dates) != 1:
+        raise ValueError("Phase-level execution accepts exactly one trading date per call")
 
     if reset_runtime_tables:
         _reset_runtime_tables(sim_db_path)
@@ -217,7 +238,13 @@ async def run_simulation(
                 "agent_ids": [agent["agent_id"] for agent in agents],
                 "agent_depths": {agent["agent_id"]: int(agent.get("news_depth") or 0) for agent in agents},
                 "subturns": ["am", "pm"],
-            }
+                "turn_offset": turn_offset,
+                "day_offset": day_offset,
+                "global_turn_start": turn_offset + 1,
+                "global_turn_end": turn_offset + len(dates) * 2,
+                "phases": list(requested_phases),
+            },
+            append_existing=append_existing_logs,
         )
         if enable_logs
         else None
@@ -236,7 +263,7 @@ async def run_simulation(
         open_price: float,
         previous_close: float,
         execution_reference: str,
-    ) -> dict[str, Any] | None:
+    ) -> dict[str, Any]:
         async with semaphore:
             try:
                 return await run_agent_turn(
@@ -262,20 +289,18 @@ async def run_simulation(
                     event_logger=logger,
                     db_write_lock=db_write_lock,
                     community_agent=community,
+                    random_seed=random_seed,
                 )
             except Exception as exc:
                 if logger is not None:
                     logger.log_agent_error(agent=agent, turn=turn, date=day, error=exc)
-                memory.save_system_message(
-                    str(agent["agent_id"]),
-                    turn,
-                    day,
-                    message_type="system_error",
-                    message="이번 턴은 시스템 오류로 실패 처리되었습니다. 다음 턴에서는 이 실패를 고려해 다시 판단하세요.",
-                )
-                return None
+                # A missing agent decision makes the subturn scientifically incomplete.
+                # Let the checkpoint runner pause and restore the pre-chunk snapshot
+                # instead of silently fabricating a system message or continuing.
+                raise
 
     for day_index, day in enumerate(dates, start=1):
+        global_day_index = day_offset + day_index
         previous_execution_date = previous_by_date.get(day)
         previous_close = (
             fundamental.get_market_features(previous_execution_date)["close"]
@@ -290,57 +315,75 @@ async def run_simulation(
             am_news_max_date = day
             pm_news_max_date = day
 
-        am_turn = (day_index - 1) * 2 + 1
-        am_results = await _run_subturn(
-            subturn="am",
-            turn=am_turn,
-            day_index=day_index,
-            day=day,
-            agents=agents,
-            guarded_turn=guarded_turn,
-            exchange=exchange,
-            memory=memory,
-            logger=logger,
-            announced_price=prices["open"],
-            close_price=prices["close"],
-            last_price=previous_close,
-            current_price=prices["open"],
-            market_features_date=previous_by_date[day] if information_mode != "same_day" else day,
-            news_max_date=am_news_max_date,
-            news_start_date=previous_by_date[day] if information_mode == "pre_close_cutoff" else None,
-            news_start_time=config.MARKET_CLOSE_TIME if information_mode == "pre_close_cutoff" else None,
-            news_end_time="08:59" if information_mode == "pre_close_cutoff" else None,
-            open_price=prices["open"],
-            previous_close=previous_close,
-            execution_reference="open price",
-        )
+        am_turn = turn_offset + (day_index - 1) * 2 + 1
+        am_results = None
+        if "am" in requested_phases:
+            am_results = await _run_subturn(
+                subturn="am",
+                turn=am_turn,
+                day_index=global_day_index,
+                day=day,
+                agents=agents,
+                guarded_turn=guarded_turn,
+                exchange=exchange,
+                memory=memory,
+                logger=logger,
+                announced_price=prices["open"],
+                close_price=prices["close"],
+                last_price=previous_close,
+                current_price=prices["open"],
+                market_features_date=previous_by_date[day] if information_mode != "same_day" else day,
+                news_max_date=am_news_max_date,
+                news_start_date=previous_by_date[day] if information_mode == "pre_close_cutoff" else None,
+                news_start_time=config.MARKET_CLOSE_TIME if information_mode == "pre_close_cutoff" else None,
+                news_end_time="08:59" if information_mode == "pre_close_cutoff" else None,
+                open_price=prices["open"],
+                previous_close=previous_close,
+                execution_reference="open price",
+            )
 
         pm_turn = am_turn + 1
-        pm_results = await _run_subturn(
-            subturn="pm",
-            turn=pm_turn,
-            day_index=day_index,
-            day=day,
-            agents=agents,
-            guarded_turn=guarded_turn,
-            exchange=exchange,
-            memory=memory,
-            logger=logger,
-            announced_price=prices["close"],
-            close_price=prices["close"],
-            last_price=previous_close,
-            current_price=prices["close"],
-            market_features_date=day,
-            news_max_date=pm_news_max_date,
-            news_start_date=day if information_mode == "pre_close_cutoff" else None,
-            news_start_time="08:59" if information_mode == "pre_close_cutoff" else None,
-            news_end_time=config.MARKET_CLOSE_TIME if information_mode == "pre_close_cutoff" else None,
-            open_price=prices["open"],
-            previous_close=previous_close,
-            execution_reference="close price",
-        )
+        pm_results = None
+        if "pm" in requested_phases:
+            pm_results = await _run_subturn(
+                subturn="pm",
+                turn=pm_turn,
+                day_index=global_day_index,
+                day=day,
+                agents=agents,
+                guarded_turn=guarded_turn,
+                exchange=exchange,
+                memory=memory,
+                logger=logger,
+                announced_price=prices["close"],
+                close_price=prices["close"],
+                last_price=previous_close,
+                current_price=prices["close"],
+                market_features_date=day,
+                news_max_date=pm_news_max_date,
+                news_start_date=day if information_mode == "pre_close_cutoff" else None,
+                news_start_time="08:59" if information_mode == "pre_close_cutoff" else None,
+                news_end_time=config.MARKET_CLOSE_TIME if information_mode == "pre_close_cutoff" else None,
+                open_price=prices["open"],
+                previous_close=previous_close,
+                execution_reference="close price",
+            )
+            if logger is not None:
+                _write_pm_posting_payload(logger, day, pm_results)
 
-        if community_enabled and config.ENABLE_COMMUNITY_POSTING and community is not None:
+        if "community" in requested_phases and pm_results is None and community_enabled:
+            if logger is None:
+                raise RuntimeError("Community-only resume requires experiment logs")
+            pm_results = _load_pm_posting_payload(logger.run_dir, day)
+
+        if (
+            "community" in requested_phases
+            and community_enabled
+            and config.ENABLE_COMMUNITY_POSTING
+            and community is not None
+        ):
+            if pm_results is None:
+                raise RuntimeError("PM posting payload is unavailable for the community phase")
             await post_trade_posting_phase(
                 turn_results=pm_results["turn_results"],
                 community_agent=community,
@@ -350,8 +393,9 @@ async def run_simulation(
                 client=client,
                 concurrency=concurrency,
                 event_logger=logger,
+                random_seed=random_seed,
             )
-        if community_enabled and community is not None:
+        if "community" in requested_phases and community_enabled and community is not None:
             await community_phase(
                 agents=agents,
                 community_agent=community,
@@ -362,25 +406,76 @@ async def run_simulation(
                 client=client,
                 concurrency=concurrency,
                 event_logger=logger,
+                random_seed=random_seed,
             )
-        print(
-            f"{day} turns={am_turn}/{pm_turn} "
-            f"am_orders={am_results['order_count']} am_volume={am_results['volume']} "
-            f"pm_orders={pm_results['order_count']} pm_volume={pm_results['volume']}"
+        am_text = (
+            f"am_orders={am_results['order_count']} am_volume={am_results['volume']}"
+            if am_results is not None
+            else "am=skipped"
         )
+        pm_text = (
+            f"pm_orders={pm_results['order_count']} pm_volume={pm_results['volume']}"
+            if pm_results is not None and "order_count" in pm_results
+            else "pm=skipped_or_loaded"
+        )
+        print(f"{day} turns={am_turn}/{pm_turn} phases={','.join(requested_phases)} {am_text} {pm_text}")
     if logger is not None:
+        completion_filename = (
+            "run_complete.json"
+            if requested_phases == ("am", "pm", "community")
+            else f"phase_complete_{dates[-1]}_{requested_phases[-1]}.json"
+        )
         logger.write_json(
-            "run_complete.json",
+            completion_filename,
             {
                 "run_id": logger.run_id,
                 "agent_count": len(agents),
                 "date_count": len(dates),
                 "information_mode": information_mode,
                 "decision_space": decision_space,
+                "turn_offset": turn_offset,
+                "day_offset": day_offset,
+                "global_turn_start": turn_offset + 1,
+                "global_turn_end": turn_offset + len(dates) * 2,
+                "phases": list(requested_phases),
                 "log_dir": str(logger.run_dir),
             },
         )
         print(f"log_dir={logger.run_dir}")
+
+
+def _write_pm_posting_payload(
+    logger: SimulationLogger,
+    day: str,
+    pm_results: dict[str, Any],
+) -> None:
+    logger.write_json(
+        f"pm_posting_payload_{day}.json",
+        {
+            "turn_results": [
+                {
+                    "agent": result["agent"],
+                    "belief": result["belief"],
+                    "decision": result["decision"],
+                }
+                for result in pm_results["turn_results"]
+            ],
+            "execution_by_agent": pm_results["execution_by_agent"],
+        },
+    )
+
+
+def _load_pm_posting_payload(run_dir: Path, day: str) -> dict[str, Any]:
+    path = run_dir / f"pm_posting_payload_{day}.json"
+    if not path.exists():
+        raise RuntimeError(f"PM posting payload not found for community resume: {path}")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not payload.get("turn_results") or "execution_by_agent" not in payload:
+        raise RuntimeError(f"PM posting payload is incomplete: {path}")
+    return {
+        "turn_results": payload["turn_results"],
+        "execution_by_agent": payload["execution_by_agent"],
+    }
 
 
 def _load_execution_prices(fundamental: FundamentalAgent, dates: list[str]) -> dict[str, dict[str, float]]:
@@ -418,29 +513,39 @@ async def _run_subturn(
     previous_close: float,
     execution_reference: str,
 ) -> dict[str, Any]:
-    turn_results = [
-        result
-        for result in await asyncio.gather(
-            *(
-                guarded_turn(
-                    agent,
-                    turn,
-                    day,
-                    market_features_date,
-                    news_max_date,
-                    news_start_date,
-                    news_start_time,
-                    news_end_time,
-                    subturn,
-                    open_price,
-                    previous_close,
-                    execution_reference,
-                )
-                for agent in agents
+    parallel_results = await asyncio.gather(
+        *(
+            guarded_turn(
+                agent,
+                turn,
+                day,
+                market_features_date,
+                news_max_date,
+                news_start_date,
+                news_start_time,
+                news_end_time,
+                subturn,
+                open_price,
+                previous_close,
+                execution_reference,
             )
+            for agent in agents
+        ),
+        return_exceptions=True,
+    )
+    turn_errors = [result for result in parallel_results if isinstance(result, BaseException)]
+    if turn_errors:
+        details = "; ".join(
+            f"{type(error).__name__}: {error}" for error in turn_errors[:5]
         )
-        if result is not None
-    ]
+        raise RuntimeError(
+            f"{len(turn_errors)} agent turn(s) failed after all parallel tasks settled: {details}"
+        ) from turn_errors[0]
+    turn_results = [result for result in parallel_results if isinstance(result, dict)]
+    if len(turn_results) != len(agents):
+        raise RuntimeError(
+            f"parallel turn result count mismatch: results={len(turn_results)} agents={len(agents)}"
+        )
     orders = [result["order"] for result in turn_results if result.get("order") is not None]
     portfolio_snapshots = _portfolio_snapshots(memory, agents, turn - 1)
     results = exchange.process_daily_orders(
@@ -593,6 +698,7 @@ async def post_trade_posting_phase(
     client: OpenRouterClient,
     concurrency: int = config.SIMULATION_CONCURRENCY,
     event_logger: SimulationLogger | None = None,
+    random_seed: int = config.RANDOM_SEED,
 ) -> None:
     active_results = [
         result
@@ -604,7 +710,7 @@ async def post_trade_posting_phase(
 
     semaphore = asyncio.Semaphore(max(1, concurrency))
 
-    async def _one_post(result: dict[str, Any]) -> None:
+    async def _one_post(result: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
         async with semaphore:
             agent = result["agent"]
             agent_id = str(agent["agent_id"])
@@ -615,26 +721,46 @@ async def post_trade_posting_phase(
                 date=date,
                 execution_summary=execution_by_agent.get(agent_id, {}),
                 client=client,
+                seed=stable_llm_seed(random_seed, agent_id, turn, "community_posting"),
             )
             if post_result is None:
-                return
-            post_id = community_agent.save_post(
+                return agent_id, None
+            return agent_id, post_result
+
+    parallel_posts = await asyncio.gather(
+        *(_one_post(result) for result in active_results),
+        return_exceptions=True,
+    )
+    posting_errors = [result for result in parallel_posts if isinstance(result, BaseException)]
+    if posting_errors:
+        details = "; ".join(
+            f"{type(error).__name__}: {error}" for error in posting_errors[:5]
+        )
+        raise RuntimeError(
+            f"{len(posting_errors)} community posting call(s) failed: {details}"
+        ) from posting_errors[0]
+    generated_posts = [result for result in parallel_posts if isinstance(result, tuple)]
+    if len(generated_posts) != len(active_results):
+        raise RuntimeError("community posting result count mismatch")
+    # LLM calls remain parallel, but persistent IDs must not depend on response latency.
+    for agent_id, post_result in sorted(generated_posts, key=lambda item: item[0]):
+        if post_result is None:
+            continue
+        post_id = community_agent.save_post(
+            agent_id=agent_id,
+            turn=turn,
+            date=date,
+            post_type=post_result["post_type"],
+            title=post_result["title"],
+            content=post_result["content"],
+        )
+        if event_logger is not None:
+            event_logger.log_community_post(
                 agent_id=agent_id,
                 turn=turn,
                 date=date,
-                post_type=post_result["post_type"],
-                title=post_result["title"],
-                content=post_result["content"],
+                post={**post_result, "post_id": post_id},
             )
-            if event_logger is not None:
-                event_logger.log_community_post(
-                    agent_id=agent_id,
-                    turn=turn,
-                    date=date,
-                    post={**post_result, "post_id": post_id},
-                )
-
-    await asyncio.gather(*(_one_post(result) for result in active_results))
 
 
 async def community_phase(
@@ -648,6 +774,7 @@ async def community_phase(
     client: OpenRouterClient,
     concurrency: int = config.SIMULATION_CONCURRENCY,
     event_logger: SimulationLogger | None = None,
+    random_seed: int = config.RANDOM_SEED,
 ) -> None:
     if not config.ENABLE_COMMUNITY_READING:
         best_posts = community_agent.mark_best_posts(date, config.COMMUNITY_BEST_POST_COUNT)
@@ -680,6 +807,7 @@ async def community_phase(
         return
 
     semaphore = asyncio.Semaphore(max(1, concurrency))
+    post_list_snapshot = community_agent.get_today_posts(date)
 
     async def _one_agent_reading(agent: dict[str, Any]) -> tuple[str, list[int], list[dict[str, Any]]]:
         async with semaphore:
@@ -690,12 +818,11 @@ async def community_phase(
                 else config.COMMUNITY_DEPTH1_READ_LIMIT
             )
             agent_id = str(agent["agent_id"])
-            post_list = community_agent.get_today_posts(date)
-            if not post_list:
+            if not post_list_snapshot:
                 return agent_id, [], []
             visible_posts = [
                 {**post, "author_badges": badges.get(str(post["agent_id"]), [])}
-                for post in post_list
+                for post in post_list_snapshot
                 if str(post["agent_id"]) != agent_id
             ]
             if event_logger is not None:
@@ -707,7 +834,13 @@ async def community_phase(
                     read_limit=read_limit,
                     visible_posts=visible_posts,
                 )
-            selected_ids = await community_reading_select(agent, visible_posts, read_limit, client=client)
+            selected_ids = await community_reading_select(
+                agent,
+                visible_posts,
+                read_limit,
+                client=client,
+                seed=stable_llm_seed(random_seed, agent_id, turn, "community_read_select"),
+            )
             if not selected_ids:
                 return agent_id, [], []
 
@@ -724,15 +857,17 @@ async def community_phase(
                 )
                 posts_content.append(content)
 
-            reactions = await community_reading_react(agent, posts_content, client=client)
+            reactions = await community_reading_react(
+                agent,
+                posts_content,
+                client=client,
+                seed=stable_llm_seed(random_seed, agent_id, turn, "community_read_react"),
+            )
             reaction_map = {int(item["post_id"]): item["reaction"] for item in reactions}
             posts_read: list[dict[str, Any]] = []
             for post in posts_content:
                 post_id = int(post["post_id"])
                 reaction = reaction_map.get(post_id, "read")
-                recorded = community_agent.record_reaction(agent_id, post_id, turn, date, reaction)
-                if recorded and reaction in {"like", "unlike"}:
-                    community_agent.update_post_score_live(post_id, reaction)
                 posts_read.append(
                     {
                         "post_id": post_id,
@@ -744,17 +879,39 @@ async def community_phase(
                         "author_profile": post.get("author_profile"),
                     }
                 )
-            if event_logger is not None:
-                event_logger.log_community_reading(
-                    agent_id=agent_id,
-                    turn=turn,
-                    date=date,
-                    selected_post_ids=selected_ids,
-                    posts_read=posts_read,
-                )
             return agent_id, selected_ids, posts_read
 
-    results = await asyncio.gather(*(_one_agent_reading(agent) for agent in active_agents))
+    parallel_reading = await asyncio.gather(
+        *(_one_agent_reading(agent) for agent in active_agents),
+        return_exceptions=True,
+    )
+    reading_errors = [result for result in parallel_reading if isinstance(result, BaseException)]
+    if reading_errors:
+        details = "; ".join(
+            f"{type(error).__name__}: {error}" for error in reading_errors[:5]
+        )
+        raise RuntimeError(
+            f"{len(reading_errors)} community reading call(s) failed: {details}"
+        ) from reading_errors[0]
+    results = [result for result in parallel_reading if isinstance(result, tuple)]
+    if len(results) != len(active_agents):
+        raise RuntimeError("community reading result count mismatch")
+    # Apply reactions only after every agent has seen the same frozen board.
+    for agent_id, selected_ids, posts_read in sorted(results, key=lambda item: item[0]):
+        for post in posts_read:
+            reaction = str(post.get("reaction") or "read")
+            post_id = int(post["post_id"])
+            recorded = community_agent.record_reaction(agent_id, post_id, turn, date, reaction)
+            if recorded and reaction in {"like", "unlike"}:
+                community_agent.update_post_score_live(post_id, reaction)
+        if event_logger is not None:
+            event_logger.log_community_reading(
+                agent_id=agent_id,
+                turn=turn,
+                date=date,
+                selected_post_ids=selected_ids,
+                posts_read=posts_read,
+            )
     best_posts = community_agent.mark_best_posts(date, config.COMMUNITY_BEST_POST_COUNT)
     if event_logger is not None:
         event_logger.log_community_best_posts(turn=turn, date=date, best_posts=best_posts)
@@ -788,4 +945,17 @@ def _reset_runtime_tables(db_path: str) -> None:
         conn.execute("DELETE FROM community_posts")
         conn.execute("DELETE FROM community_interactions")
         conn.execute("DELETE FROM community_logs WHERE turn > 0")
+        conn.execute("DELETE FROM agent_system_messages")
+        runtime_tables = (
+            "TradingDetails",
+            "trade_log",
+            "community_posts",
+            "community_interactions",
+            "agent_system_messages",
+        )
+        placeholders = ",".join("?" for _ in runtime_tables)
+        conn.execute(
+            f"DELETE FROM sqlite_sequence WHERE name IN ({placeholders})",
+            runtime_tables,
+        )
         conn.commit()

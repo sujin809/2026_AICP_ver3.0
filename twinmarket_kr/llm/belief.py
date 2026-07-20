@@ -6,10 +6,14 @@ from typing import Any
 
 import config
 from twinmarket_kr.agents.memory_agent import MemoryAgent
-from twinmarket_kr.llm.client import OpenRouterClient, response_content
+from twinmarket_kr.llm.client import OpenRouterClient, response_content, stable_llm_seed
 
 
 BELIEF_KEYS = ("dim_1", "dim_2", "dim_3", "dim_4", "dim_5", "dim_6", "belief_summary", "view_change")
+
+
+class BeliefValidationError(RuntimeError):
+    pass
 
 
 def load_prompt(name: str) -> str:
@@ -34,7 +38,10 @@ def parse_belief_json(content: str) -> dict[str, str]:
         data = {}
     for key in BELIEF_KEYS:
         data.setdefault(key, "")
-    return {key: str(data[key]) for key in BELIEF_KEYS}
+    return {
+        key: str(data[key]) if isinstance(data[key], (str, int, float)) and not isinstance(data[key], bool) else ""
+        for key in BELIEF_KEYS
+    }
 
 
 def offline_initial_belief(agent: dict[str, Any]) -> dict[str, str]:
@@ -75,6 +82,7 @@ async def generate_initial_belief(
             [{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
             temperature=0.2,
+            audit_label="initial_belief",
         )
         parsed = parse_belief_json(response_content(response) or "{}")
     belief = {"agent_id": agent["agent_id"], "turn": 0, "date": date, **parsed}
@@ -89,6 +97,8 @@ async def update_belief(
     *,
     client: OpenRouterClient | None = None,
     memory: MemoryAgent | None = None,
+    seed: int | None = None,
+    validation_attempts: int = 4,
 ) -> dict[str, Any]:
     client = client or OpenRouterClient()
     prompt = load_prompt("update_belief.txt").format(
@@ -96,16 +106,34 @@ async def update_belief(
         today_context=json.dumps(today_context, ensure_ascii=False, indent=2),
         **_limits(),
     )
-    response = await client.chat(
-        [{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"},
-        temperature=0.2,
-    )
-    parsed = parse_belief_json(response_content(response) or "{}")
+    if validation_attempts < 1:
+        raise ValueError("validation_attempts must be at least 1")
+    parsed: dict[str, str] | None = None
+    invalid_history: list[list[str]] = []
+    for attempt in range(1, validation_attempts + 1):
+        response = await client.chat(
+            [{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            temperature=0.2 if attempt == 1 else 0.1,
+            seed=stable_llm_seed(seed or 0, "belief_validation", attempt),
+            audit_label="belief_update",
+        )
+        candidate = parse_belief_json(response_content(response) or "{}")
+        errors = [key for key in BELIEF_KEYS if not candidate.get(key, "").strip()]
+        if not errors:
+            parsed = candidate
+            break
+        invalid_history.append(errors)
+    if parsed is None:
+        raise BeliefValidationError(
+            "LLM did not produce a complete belief after "
+            f"{validation_attempts} validation attempts; empty keys={invalid_history}"
+        )
     belief = {
         "agent_id": agent["agent_id"],
         "turn": int(today_context["turn"]),
         "date": today_context["date"],
+        "generation_attempts": len(invalid_history) + 1,
         **parsed,
     }
     if memory is not None:

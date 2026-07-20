@@ -74,11 +74,15 @@ def collect_context(
         if open_price:
             market_features["intraday_return_from_open"] = (announced_price - open_price) / open_price
     community_log = None
+    community_log_turn = None
     if community_agent is not None and turn > 1:
         if config.ENABLE_COMMUNITY and news_depth >= 1:
-            community_turn = turn - 2 if subturn == "pm" else turn - 1
+            # The prior day's post-close board is injected directly once, at AM.
+            community_turn = turn - 1 if subturn == "am" else 0
             if community_turn > 0:
                 community_log = community_agent.get_community_log(str(agent["agent_id"]), community_turn)
+                if community_log is not None:
+                    community_log_turn = community_turn
     return {
         "agent_id": agent["agent_id"],
         "turn": turn,
@@ -102,6 +106,7 @@ def collect_context(
         "news_context": news_context,
         "market_features": market_features,
         "community_log": community_log,
+        "community_log_turn": community_log_turn,
     }
 
 

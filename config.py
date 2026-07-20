@@ -34,6 +34,7 @@ PROCESSED_NEWS_INJECTION_BULLISH_CSV = OUTPUT_DIR / "processed_news_injection_bu
 DAILY_NEWS_SELECTION_INJECTION_BULLISH_CSV = OUTPUT_DIR / "daily_news_selection_injection_bullish.csv"
 SYS_100_DB = OUTPUT_DIR / "sys_100.db"
 SIM_DB = OUTPUT_DIR / "sim.db"
+EXPERIMENT_BASE_DB = OUTPUT_DIR / "experiment_base_sim.db"
 
 STOCK_CODE = "005930"
 COUNTERSIDE_USER_ID = "COUNTERSIDE"
@@ -48,7 +49,6 @@ RANDOM_SEED = 2
 NEWS_DEPTH2_RATIO = 0.30
 NEWS_DEPTH0_COUNT = 15
 MAX_SINGLE_TRADE_CASH_RATIO = 0.50
-SIMULATION_CONCURRENCY = 8
 MARKET_CLOSE_TIME = "15:30"
 ORDER_CUTOFF_TIME = "15:30"
 
@@ -68,8 +68,32 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o")
+PAPER_OPENROUTER_MODEL = "qwen/qwen3.5-flash-02-23"
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", PAPER_OPENROUTER_MODEL)
 OPENROUTER_EMBED_MODEL = os.getenv("OPENROUTER_EMBED_MODEL", "")
+OPENROUTER_MAX_RETRIES = int(os.getenv("OPENROUTER_MAX_RETRIES", "6"))
+OPENROUTER_RETRY_MAX_DELAY = float(os.getenv("OPENROUTER_RETRY_MAX_DELAY", "30"))
+OPENROUTER_GLOBAL_CONCURRENCY = int(os.getenv("OPENROUTER_GLOBAL_CONCURRENCY", "16"))
+OPENROUTER_REQUIRE_PARAMETERS = os.getenv("OPENROUTER_REQUIRE_PARAMETERS", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+OPENROUTER_ALLOW_FALLBACKS = os.getenv("OPENROUTER_ALLOW_FALLBACKS", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+OPENROUTER_PROVIDER_ORDER = [
+    item.strip()
+    for item in os.getenv("OPENROUTER_PROVIDER_ORDER", "").split(",")
+    if item.strip()
+]
+OPENROUTER_SLOT_DIR = OUTPUT_DIR / ".openrouter_slots"
+OPENROUTER_AUDIT_LOG = Path(
+    os.getenv("OPENROUTER_AUDIT_LOG", str(OUTPUT_DIR / "openrouter_calls.jsonl"))
+)
+SIMULATION_CONCURRENCY = int(os.getenv("SIMULATION_CONCURRENCY", "30"))
 
 
 # ===== Community Settings =====

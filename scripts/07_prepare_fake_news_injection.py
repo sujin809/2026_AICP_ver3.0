@@ -15,6 +15,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import pandas as pd
 
 import config
+from twinmarket_kr.experiment_runtime import file_sha256
 
 
 PRIVATE_FIELDS = [
@@ -71,6 +72,7 @@ PRIVATE_FIELDS = [
     "agent_visible_label_removed",
     "generated_by",
     "prompt_version",
+    "final_approval",
 ]
 
 
@@ -107,6 +109,22 @@ def _bool_text(value: Any) -> str:
     return "true" if text in {"1", "true", "yes", "y"} else "false"
 
 
+def _as_bool(value: Any, *, default: bool = False) -> bool:
+    if value is None or (not isinstance(value, bool) and pd.isna(value)):
+        return default
+    if isinstance(value, bool):
+        return value
+    return _clean(value).lower() in {"1", "true", "yes", "y"}
+
+
+def _manifest_path(path: Path) -> str:
+    resolved = path.resolve()
+    try:
+        return str(resolved.relative_to(PROJECT_ROOT.resolve()))
+    except ValueError:
+        return str(resolved)
+
+
 def _category(row: dict[str, Any]) -> str:
     raw = _clean(row.get("replace_target_category") or row.get("category"))
     if raw in {"종목", "섹터", "경제"}:
@@ -129,13 +147,13 @@ def _fake_rows(fake_pkl_path: Path, *, approved_only: bool = True) -> list[dict[
     for raw in rows:
         leakage_safe = raw.get("leakage_safe", raw.get("agent_visible_label_removed", True))
         agent_visible_label_removed = raw.get("agent_visible_label_removed", True)
-        if bool(leakage_safe) is not True:
+        if not _as_bool(leakage_safe):
             continue
-        if bool(agent_visible_label_removed) is not True:
+        if not _as_bool(agent_visible_label_removed):
             continue
         if approved_only:
-            final_approval = raw.get("final_approval", True)
-            if bool(final_approval) is not True:
+            final_approval = raw.get("final_approval", False)
+            if not _as_bool(final_approval):
                 continue
         date = _clean(raw.get("date"))
         title = _clean(raw.get("title"))
@@ -215,6 +233,11 @@ def prepare_fake_news_injection(
     processed = _read_csv(processed_csv_path)
     daily = _read_csv(daily_csv_path)
     fake_rows = _fake_rows(fake_pkl_path, approved_only=approved_only)
+    if not fake_rows:
+        raise RuntimeError(
+            "No fake-news rows passed the stimulus policy. "
+            "Check final_approval/leakage_safe metadata or use the review-only policy explicitly."
+        )
 
     existing_ids = {row.get("id", "") for row in processed}
     duplicate_ids = [row["id"] for row in fake_rows if row["id"] in existing_ids]
@@ -236,11 +259,11 @@ def prepare_fake_news_injection(
     )
 
     manifest = {
-        "processed_csv": str(output_processed_csv_path),
-        "daily_csv": str(output_daily_csv_path),
-        "baseline_processed_csv": str(processed_csv_path),
-        "baseline_daily_csv": str(daily_csv_path),
-        "fake_pkl": str(fake_pkl_path),
+        "processed_csv": _manifest_path(output_processed_csv_path),
+        "daily_csv": _manifest_path(output_daily_csv_path),
+        "baseline_processed_csv": _manifest_path(processed_csv_path),
+        "baseline_daily_csv": _manifest_path(daily_csv_path),
+        "fake_pkl": _manifest_path(fake_pkl_path),
         "variant": variant,
         "baseline_processed_count": len(processed),
         "baseline_daily_count": len(daily),
@@ -249,6 +272,27 @@ def prepare_fake_news_injection(
         "daily_count": len(daily_out),
         "injection_mode": "append",
         "agent_visible_fake_label_removed": True,
+        "approved_only": approved_only,
+        "stimulus_policy": (
+            "human_approved_only"
+            if approved_only
+            else "leakage_safe_phase_review_including_unapproved"
+        ),
+        "approved_fake_count": sum(
+            _as_bool(row.get("final_approval")) for row in fake_rows
+        ),
+        "unapproved_fake_count": sum(
+            not _as_bool(row.get("final_approval")) for row in fake_rows
+        ),
+        "input_sha256": {
+            "baseline_processed_csv": file_sha256(processed_csv_path),
+            "baseline_daily_csv": file_sha256(daily_csv_path),
+            "fake_pkl": file_sha256(fake_pkl_path),
+        },
+        "output_sha256": {
+            "processed_csv": file_sha256(output_processed_csv_path),
+            "daily_csv": file_sha256(output_daily_csv_path),
+        },
         "fake_by_date": {},
     }
     for row in fake_rows:

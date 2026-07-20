@@ -4,13 +4,14 @@ from typing import Any
 
 import config
 from twinmarket_kr.llm.belief import load_prompt
-from twinmarket_kr.llm.client import OpenRouterClient, response_content
+from twinmarket_kr.llm.client import OpenRouterClient, response_content, stable_llm_seed
 
 
 async def community_thinking(
     agent: dict[str, Any],
     community_log: dict[str, Any],
     client: OpenRouterClient | None = None,
+    seed: int | None = None,
 ) -> str:
     client = client or OpenRouterClient()
     prompt_template = load_prompt("community_thinking.txt")
@@ -20,12 +21,18 @@ async def community_thinking(
         posts_read_summary=_format_posts_read(community_log.get("posts_read") or []),
         depth=int(agent.get("news_depth") or 0),
     )
-    response = await client.chat(
-        [{"role": "user", "content": prompt}],
-        model=config.OPENROUTER_COMMUNITY_MODEL,
-        temperature=0.3,
-    )
-    return response_content(response).strip()
+    for attempt in range(1, 5):
+        response = await client.chat(
+            [{"role": "user", "content": prompt}],
+            model=config.OPENROUTER_COMMUNITY_MODEL,
+            temperature=0.3 if attempt == 1 else 0.1,
+            seed=stable_llm_seed(seed or 0, "community_thinking_validation", attempt),
+            audit_label="community_thinking",
+        )
+        content = response_content(response).strip()
+        if content:
+            return content
+    raise RuntimeError("community thinking was empty after 4 attempts")
 
 
 def _format_best_posts(best_posts: list[dict[str, Any]]) -> str:

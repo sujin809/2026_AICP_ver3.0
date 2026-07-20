@@ -49,10 +49,19 @@ class SimulationLogger:
             "execution_date",
             "information_mode",
             "news_depth",
+            "visible_news_ids",
+            "read_news_ids",
+            "search_result_ids",
+            "influential_news_ids",
+            "unmapped_influential_news",
             "selected_news_count",
             "read_news_count",
             "search_read_count",
             "fake_exposed",
+            "fake_visible",
+            "fake_read",
+            "fake_searched",
+            "fake_influential",
             "fake_base_count",
             "fake_read_count",
             "fake_search_count",
@@ -64,9 +73,22 @@ class SimulationLogger:
             "depth2_search_result_count",
             "depth2_view_change",
             "news_sentiment",
+            "community_log_turn",
+            "community_thinking",
             "action",
             "quantity",
             "submitted_order",
+            "decision_attempts",
+            "decision_retry_count",
+            "decision_origin",
+            "available_cash",
+            "current_quantity",
+            "max_buy_quantity",
+            "max_sell_quantity",
+            "selected_action_max_quantity",
+            "one_share_reason",
+            "deterministic_fallback_used",
+            "belief_generation_attempts",
             "belief_summary",
             "view_change",
             "decision_reason",
@@ -91,6 +113,9 @@ class SimulationLogger:
             "action",
             "quantity",
             "reason",
+            "decision_attempts",
+            "decision_origin",
+            "one_share_reason",
         ]
         self._fills_csv_fields = [
             "run_id",
@@ -218,6 +243,12 @@ class SimulationLogger:
             event["fake_news_audit"] = fake_news_audit
         self.write_jsonl("agent_turns.jsonl", event)
         selected_news = news_interpretation.get("selected_news") or []
+        influential_news_ids = [
+            str(value) for value in news_context.get("influential_news_ids") or []
+        ] or _news_reference_ids(selected_news)
+        visible_news_ids = [str(value) for value in news_context.get("visible_news_ids") or []]
+        read_news_ids = [str(value) for value in news_context.get("read_news_ids") or []]
+        search_result_ids = [str(value) for value in news_context.get("search_result_ids") or []]
         step3 = (depth2_flow or {}).get("step3_search") or {}
         step4 = (depth2_flow or {}).get("step4_post_search_thinking") or {}
         self.append_csv(
@@ -238,10 +269,22 @@ class SimulationLogger:
                 "execution_date": context.get("execution_date", date),
                 "information_mode": context.get("information_mode", "pre_close_cutoff"),
                 "news_depth": news_context.get("news_depth"),
+                "visible_news_ids": ", ".join(visible_news_ids),
+                "read_news_ids": ", ".join(read_news_ids),
+                "search_result_ids": ", ".join(search_result_ids),
+                "influential_news_ids": ", ".join(influential_news_ids),
+                "unmapped_influential_news": json.dumps(
+                    news_interpretation.get("unmapped_selected_news") or [],
+                    ensure_ascii=False,
+                ),
                 "selected_news_count": len(selected_news) if isinstance(selected_news, list) else 0,
                 "read_news_count": len(news_context.get("read_contents") or []),
                 "search_read_count": len(news_context.get("search_read_contents") or []),
                 "fake_exposed": bool((fake_news_audit or {}).get("fake_exposed")),
+                "fake_visible": bool((fake_news_audit or {}).get("fake_visible")),
+                "fake_read": bool((fake_news_audit or {}).get("fake_read")),
+                "fake_searched": bool((fake_news_audit or {}).get("fake_searched")),
+                "fake_influential": bool((fake_news_audit or {}).get("fake_influential")),
                 "fake_base_count": (fake_news_audit or {}).get("fake_base_count", 0),
                 "fake_read_count": (fake_news_audit or {}).get("fake_read_count", 0),
                 "fake_search_count": (fake_news_audit or {}).get("fake_search_count", 0),
@@ -256,9 +299,22 @@ class SimulationLogger:
                 "depth2_search_result_count": step3.get("result_count", ""),
                 "depth2_view_change": step4.get("view_change", ""),
                 "news_sentiment": news_interpretation.get("news_sentiment"),
+                "community_log_turn": context.get("community_log_turn") or "",
+                "community_thinking": context.get("community_thinking") or "",
                 "action": decision.get("action"),
                 "quantity": decision.get("quantity"),
                 "submitted_order": bool(order),
+                "decision_attempts": decision.get("decision_attempts"),
+                "decision_retry_count": decision.get("decision_retry_count"),
+                "decision_origin": decision.get("decision_origin"),
+                "available_cash": decision.get("available_cash"),
+                "current_quantity": decision.get("current_quantity"),
+                "max_buy_quantity": decision.get("max_buy_quantity"),
+                "max_sell_quantity": decision.get("max_sell_quantity"),
+                "selected_action_max_quantity": decision.get("selected_action_max_quantity"),
+                "one_share_reason": decision.get("one_share_reason"),
+                "deterministic_fallback_used": decision.get("deterministic_fallback_used", False),
+                "belief_generation_attempts": belief.get("generation_attempts"),
                 "belief_summary": belief.get("belief_summary"),
                 "view_change": belief.get("view_change"),
                 "decision_reason": decision.get("reason"),
@@ -305,6 +361,9 @@ class SimulationLogger:
                 "action": order.get("direction") or order.get("action"),
                 "quantity": order.get("quantity"),
                 "reason": order.get("reason"),
+                "decision_attempts": order.get("decision_attempts"),
+                "decision_origin": order.get("decision_origin"),
+                "one_share_reason": order.get("one_share_reason"),
             },
         )
 
@@ -625,3 +684,15 @@ def _subturn_from_turn(turn: int) -> str:
     if turn <= 0:
         return "full"
     return "am" if turn % 2 == 1 else "pm"
+
+
+def _news_reference_ids(items: Any) -> list[str]:
+    if not isinstance(items, list):
+        return []
+    result: list[str] = []
+    for item in items:
+        if isinstance(item, dict) and item.get("id"):
+            result.append(str(item["id"]))
+        elif isinstance(item, str) and item.startswith("news_"):
+            result.append(item)
+    return result

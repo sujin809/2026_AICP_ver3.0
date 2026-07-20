@@ -5,7 +5,7 @@ from typing import Any
 
 import config
 from twinmarket_kr.llm.belief import load_prompt
-from twinmarket_kr.llm.client import OpenRouterClient, response_content
+from twinmarket_kr.llm.client import OpenRouterClient, response_content, stable_llm_seed
 
 
 DECISION_KEYS = ("action", "quantity", "reason", "risk_control")
@@ -68,11 +68,25 @@ def parse_decision_json(content: str, constraints: dict[str, Any] | None = None)
         "risk_control": "",
     }.items():
         data.setdefault(key, default)
-    action = str(data["action"]).lower()
-    quantity = max(0, int(data.get("quantity") or 0))
-    price = float(data.get("price") or 0)
+    action = str(data["action"]).strip().lower()
     corrections: list[str] = []
     validation_errors: list[str] = []
+    raw_quantity = data.get("quantity")
+    try:
+        if isinstance(raw_quantity, bool):
+            raise ValueError("boolean is not an order quantity")
+        numeric_quantity = float(raw_quantity)
+        if not numeric_quantity.is_integer():
+            raise ValueError("fractional share quantity")
+        quantity = int(numeric_quantity)
+    except (TypeError, ValueError, OverflowError):
+        quantity = 0
+        validation_errors.append("invalid_quantity_format")
+    try:
+        price = float(data.get("price") or 0)
+    except (TypeError, ValueError, OverflowError):
+        price = 0.0
+        validation_errors.append("invalid_price_format")
     order_type = "announced_price"
     if constraints:
         allow_hold = bool(constraints.get("allow_hold", False))
@@ -96,6 +110,10 @@ def parse_decision_json(content: str, constraints: dict[str, Any] | None = None)
         price = reference_price if action in {"buy", "sell"} else 0
         if not allowed_actions:
             validation_errors.append("no_allowed_actions")
+    if not str(data.get("reason") or "").strip():
+        validation_errors.append("missing_reason")
+    if not str(data.get("risk_control") or "").strip():
+        validation_errors.append("missing_risk_control")
     return {
         "action": action,
         "quantity": quantity,
@@ -109,80 +127,40 @@ def parse_decision_json(content: str, constraints: dict[str, Any] | None = None)
     }
 
 
-def _fallback_decision(
-    invalid_decision: dict[str, Any],
+class DecisionValidationError(RuntimeError):
+    pass
+
+
+def _decision_diagnostics(
+    decision: dict[str, Any],
     constraints: dict[str, Any],
+    *,
+    attempts: int,
 ) -> dict[str, Any]:
-    allowed_actions = list(constraints.get("allowed_actions") or [])
-    min_order_unit = int(constraints.get("min_order_unit") or 1)
-    max_buy_quantity = int(constraints.get("max_buy_quantity") or 0)
-    max_sell_quantity = int(constraints.get("max_sell_quantity") or 0)
-    current_price = float(constraints.get("current_price") or 0)
-    invalid_errors = invalid_decision.get("validation_errors") or []
-    invalid_action = str(invalid_decision.get("action") or "").lower()
-
-    if invalid_action in allowed_actions:
-        action = invalid_action
-    elif "sell" in allowed_actions and max_sell_quantity >= min_order_unit:
-        action = "sell"
-    elif "buy" in allowed_actions and max_buy_quantity >= min_order_unit:
-        action = "buy"
-    elif allowed_actions:
-        action = allowed_actions[0]
+    action = str(decision.get("action") or "")
+    quantity = int(decision.get("quantity") or 0)
+    max_quantity = int(
+        constraints.get("max_buy_quantity" if action == "buy" else "max_sell_quantity") or 0
+    )
+    if quantity != 1:
+        one_share_reason = "not_one_share"
+    elif max_quantity == 1:
+        one_share_reason = "constraint_maximum_is_one"
+    elif max_quantity > 1:
+        one_share_reason = "llm_selected_one_with_larger_capacity"
     else:
-        return {
-            "action": "hold",
-            "quantity": 0,
-            "order_type": "announced_price",
-            "price": 0,
-            "reason": "fallback_decision_after_invalid_llm_output: no allowed buy/sell action was available.",
-            "risk_control": "No order was submitted because trading constraints allowed neither buy nor sell.",
-            "order_corrections": ["fallback_decision_after_invalid_llm_output", "no_allowed_actions"],
-            "validation_errors": [],
-            "original_validation_errors": invalid_errors,
-            "valid": True,
-        }
-
-    if action == "buy":
-        max_quantity = max_buy_quantity
-    else:
-        max_quantity = max_sell_quantity
-    quantity = min_order_unit if max_quantity >= min_order_unit else max(0, max_quantity)
-
-    if quantity < min_order_unit:
-        return {
-            "action": "hold",
-            "quantity": 0,
-            "order_type": "announced_price",
-            "price": 0,
-            "reason": (
-                "fallback_decision_after_invalid_llm_output: selected action had no valid "
-                "minimum tradable quantity."
-            ),
-            "risk_control": "No order was submitted because the minimum order quantity could not be satisfied.",
-            "order_corrections": ["fallback_decision_after_invalid_llm_output", "quantity_below_min_after_fallback"],
-            "validation_errors": [],
-            "original_validation_errors": invalid_errors,
-            "valid": True,
-        }
-
+        one_share_reason = "unknown"
     return {
-        "action": action,
-        "quantity": quantity,
-        "order_type": "announced_price",
-        "price": current_price,
-        "reason": (
-            "fallback_decision_after_invalid_llm_output: the model failed to return a valid "
-            f"decision after retry, so the system submitted a minimal valid {action} order."
-        ),
-        "risk_control": (
-            "Fallback used the minimum tradable quantity to keep the simulation running while "
-            "limiting unintended portfolio impact."
-        ),
-        "order_corrections": ["fallback_decision_after_invalid_llm_output"],
-        "validation_errors": [],
-        "original_validation_errors": invalid_errors,
-        "valid": True,
+        "decision_attempts": attempts,
+        "decision_retry_count": attempts - 1,
+        "decision_origin": "llm_first_response" if attempts == 1 else "llm_validation_retry",
+        "available_cash": float(constraints.get("available_cash") or 0),
+        "current_quantity": int(constraints.get("current_quantity") or 0),
+        "max_buy_quantity": int(constraints.get("max_buy_quantity") or 0),
+        "max_sell_quantity": int(constraints.get("max_sell_quantity") or 0),
+        "selected_action_max_quantity": max_quantity,
+        "one_share_reason": one_share_reason,
+        "deterministic_fallback_used": False,
     }
 
 
@@ -196,6 +174,8 @@ async def make_decision(
     *,
     allow_hold: bool = False,
     client: OpenRouterClient | None = None,
+    seed: int | None = None,
+    validation_attempts: int = 4,
 ) -> dict[str, Any]:
     client = client or OpenRouterClient()
     decision_space_instruction = (
@@ -212,30 +192,33 @@ async def make_decision(
         trading_constraints=json.dumps(trading_constraints, ensure_ascii=False, indent=2),
         decision_space_instruction=decision_space_instruction,
     )
-    response = await client.chat(
-        [{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"},
-        temperature=0.2,
+    if validation_attempts < 1:
+        raise ValueError("validation_attempts must be at least 1")
+    invalid_history: list[list[str]] = []
+    current_prompt = prompt
+    for attempt in range(1, validation_attempts + 1):
+        response = await client.chat(
+            [{"role": "user", "content": current_prompt}],
+            response_format={"type": "json_object"},
+            temperature=0.2 if attempt == 1 else 0.1,
+            seed=stable_llm_seed(seed or 0, "decision_validation", attempt),
+            audit_label="trading_decision",
+        )
+        decision = parse_decision_json(response_content(response) or "{}", trading_constraints)
+        if decision.get("valid"):
+            decision.update(_decision_diagnostics(decision, trading_constraints, attempts=attempt))
+            decision["invalid_attempt_errors"] = invalid_history
+            return decision
+        invalid_history.append(list(decision.get("validation_errors") or []))
+        current_prompt = (
+            prompt
+            + "\n\n이전 응답은 거래 제약을 위반했습니다. "
+            + f"위반 항목: {decision.get('validation_errors')}. "
+            + "판단 자체는 유지하거나 다시 판단해도 되지만, 설명하지 말고 JSON만 출력하세요. "
+            + "action은 반드시 allowed_actions 안의 buy 또는 sell이어야 합니다. "
+            + "quantity는 반드시 1 이상의 정수이고 선택한 action의 최대 수량 이하여야 합니다."
+        )
+    raise DecisionValidationError(
+        "LLM did not produce a valid buy/sell decision after "
+        f"{validation_attempts} validation attempts: {invalid_history}"
     )
-    decision = parse_decision_json(response_content(response) or "{}", trading_constraints)
-    if decision.get("valid"):
-        return decision
-
-    retry_prompt = (
-        prompt
-        + "\n\n이전 응답은 거래 제약을 위반했습니다. "
-        + f"위반 항목: {decision.get('validation_errors')}. "
-        + "설명하지 말고 JSON만 출력하세요. "
-        + "action은 반드시 allowed_actions 안의 값 하나여야 하며 빈 문자열, null, hold는 금지입니다. "
-        + "quantity는 반드시 1 이상의 정수이고 허용된 최대 수량 이하여야 합니다. "
-        + "판단이 어렵다면 allowed_actions의 첫 번째 action과 quantity 1을 사용하세요."
-    )
-    response = await client.chat(
-        [{"role": "user", "content": retry_prompt}],
-        response_format={"type": "json_object"},
-        temperature=0.1,
-    )
-    decision = parse_decision_json(response_content(response) or "{}", trading_constraints)
-    if not decision.get("valid"):
-        return _fallback_decision(decision, trading_constraints)
-    return decision
