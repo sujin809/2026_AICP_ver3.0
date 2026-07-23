@@ -8,7 +8,7 @@ import sqlite3
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import config
 
@@ -259,6 +259,7 @@ def prepare_news(
     daily_csv_path: Path | str = config.DAILY_NEWS_SELECTION_CSV,
     *,
     daily_seed: int | None = None,
+    sources: "Iterable[str] | None" = None,
 ) -> tuple[int, int]:
     raw_path = Path(raw_pkl_path)
     if not raw_path.exists():
@@ -266,10 +267,21 @@ def prepare_news(
     with raw_path.open("rb") as f:
         raw = pickle.load(f)
 
+    # Restrict the source pool (e.g. ``{"mk"}``) so a study can pin a single
+    # publisher.  ``None`` keeps every source for backward compatibility.
+    allowed_sources = (
+        {str(s).strip().lower() for s in sources if str(s).strip()}
+        if sources is not None
+        else None
+    )
+
     seen: set[tuple[str, str]] = set()
     processed: list[dict[str, Any]] = []
     per_day_counter: dict[str, int] = defaultdict(int)
     for item in _raw_records(raw):
+        if allowed_sources is not None:
+            if str(item.get("source") or "").strip().lower() not in allowed_sources:
+                continue
         title = str(item.get("title") or item.get("headline") or "").strip()
         if not title or _is_excluded_title(title):
             continue

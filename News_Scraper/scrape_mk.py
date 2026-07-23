@@ -46,6 +46,11 @@ class Article:
     published_date: str | None
     published_time: str | None
     body: str
+    # Optional (schema.org ``dateModified``); defaulted so the playwright
+    # list-page scrapers that reuse this dataclass keep working unchanged.
+    modified_at: str | None = None
+    modified_date: str | None = None
+    modified_time: str | None = None
 
 
 def clean_text(text: str) -> str:
@@ -81,6 +86,29 @@ def get_json_ld_published_at(soup: BeautifulSoup) -> str | None:
         for node in nodes:
             if isinstance(node, dict) and node.get("datePublished"):
                 return str(node["datePublished"])
+    return None
+
+
+def get_json_ld_modified_at(soup: BeautifulSoup) -> str | None:
+    """Return schema.org ``dateModified`` (매일경제 '수정' time) when present.
+
+    News content is often edited after first publication (e.g. an EOD price or
+    final investor-flow figure added after the market close).  A study that
+    gates news by its final edited version must record this, not only the
+    original ``datePublished``.
+    """
+    for script in soup.select('script[type="application/ld+json"]'):
+        raw = script.string or script.get_text("", strip=True)
+        if not raw:
+            continue
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        nodes = data if isinstance(data, list) else [data]
+        for node in nodes:
+            if isinstance(node, dict) and node.get("dateModified"):
+                return str(node["dateModified"])
     return None
 
 
@@ -179,6 +207,8 @@ def parse_article(session: requests.Session, item: SearchItem) -> Article:
 
     published_at = extract_published_at(soup)
     published_date, published_time = parse_input_time(published_at)
+    modified_at = get_json_ld_modified_at(soup)
+    modified_date, modified_time = parse_input_time(modified_at)
     body = extract_body(soup)
 
     return Article(
@@ -191,6 +221,9 @@ def parse_article(session: requests.Session, item: SearchItem) -> Article:
         published_at=published_at,
         published_date=published_date,
         published_time=published_time,
+        modified_at=modified_at,
+        modified_date=modified_date,
+        modified_time=modified_time,
         body=body,
     )
 
