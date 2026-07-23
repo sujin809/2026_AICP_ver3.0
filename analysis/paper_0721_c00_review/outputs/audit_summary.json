@@ -1,0 +1,241 @@
+{
+  "source": {
+    "branch": "off_result_20260721",
+    "commit": "56057320474a59c3c60e0554d7a066110193b331",
+    "git_commit_at_run_start": "8604f9aec041c9929e327a90cc9025b650e9fab6",
+    "run_id": "c00_commoff_fakeoff",
+    "scope": {
+      "start_date": "2026-02-27",
+      "end_date": "2026-05-04",
+      "configured_end_date": "2026-06-01",
+      "date_count": 45,
+      "agent_count": 30
+    }
+  },
+  "integrity_reconciliation": {
+    "declared_status": "pass",
+    "scope_status": "truncated_posthoc",
+    "expected_agent_turns": 2700,
+    "observed_agent_turns": 2700,
+    "unique_agent_date_subturn_keys": 2700,
+    "duplicate_agent_date_subturn_keys": 0,
+    "turn_min": 1,
+    "turn_max": 90,
+    "turn_sequence_complete": true,
+    "first_turn_all_cash_100m": true,
+    "first_turn_all_no_holdings": true,
+    "partial_chunk_after_declared_scope_exists": true,
+    "paused_file_failed_phase": "2026-04-29:pm",
+    "paused_file_is_historical_recovered_trace": true
+  },
+  "primary_metrics": {
+    "days": 45,
+    "direction_match_rate": 0.6,
+    "buy_recall": 0.5714285714285714,
+    "sell_recall": 0.6470588235294118,
+    "balanced_accuracy": 0.6092436974789917,
+    "predicted_buy_days": 22,
+    "predicted_sell_days": 23,
+    "actual_buy_days": 28,
+    "actual_sell_days": 17,
+    "pearson": 0.5031289728157168,
+    "pearson_p_naive": 0.00042724041271422706,
+    "spearman": 0.2134387351778656,
+    "spearman_p_naive": 0.1591956626800869
+  },
+  "uncertainty": {
+    "direction_match_wilson_95": [
+      0.45451854590351387,
+      0.7297511343499083
+    ],
+    "buy_recall_wilson_95": [
+      0.3907078562746876,
+      0.734914528758763
+    ],
+    "sell_recall_wilson_95": [
+      0.41300363485218694,
+      0.8269027960275627
+    ],
+    "balanced_accuracy_stratified_bootstrap_95": [
+      0.46113445378151263,
+      0.7563025210084033
+    ],
+    "note": "Day-level observations are serially ordered; these intervals are diagnostic, not a substitute for multi-seed/block-bootstrap inference."
+  },
+  "statistical_tests": {
+    "one_sided_binomial_match_vs_half_p": 0.11634659595415542,
+    "fixed_margins_hypergeometric_p": 0.132570440020957,
+    "fisher_exact_two_sided_p": 0.2214009006536407,
+    "mcnemar_vs_always_buy_exact_two_sided_p": 1.0,
+    "confusion_actual_by_predicted_buy_sell": [
+      [
+        16,
+        12
+      ],
+      [
+        6,
+        11
+      ]
+    ],
+    "note": "Exploratory day-level diagnostics; serial dependence and single-seed selection remain."
+  },
+  "decision_time_price_baselines": {
+    "am_skip_0": {
+      "baseline": "AM opening-gap contrarian",
+      "subturn": "am",
+      "feature": "opening_gap",
+      "skip_initial_days": 0,
+      "days": 45,
+      "direction_match_rate": 0.8,
+      "buy_recall": 0.7142857142857143,
+      "sell_recall": 0.9411764705882353,
+      "balanced_accuracy": 0.8277310924369747,
+      "predicted_buy_days": 21,
+      "predicted_sell_days": 24,
+      "actual_buy_days": 28,
+      "actual_sell_days": 17,
+      "pearson": 0.5638248211214665,
+      "pearson_p_naive": 5.5021863068743264e-05,
+      "spearman": 0.632300141981413,
+      "spearman_p_naive": 3.173824571687466e-06,
+      "model_only_correct_days": 5,
+      "baseline_only_correct_days": 17,
+      "paired_mcnemar_exact_two_sided_p": 0.01690053939819336
+    },
+    "am_skip_5": {
+      "baseline": "AM opening-gap contrarian",
+      "subturn": "am",
+      "feature": "opening_gap",
+      "skip_initial_days": 5,
+      "days": 40,
+      "direction_match_rate": 0.8,
+      "buy_recall": 0.6956521739130435,
+      "sell_recall": 0.9411764705882353,
+      "balanced_accuracy": 0.8184143222506394,
+      "predicted_buy_days": 17,
+      "predicted_sell_days": 23,
+      "actual_buy_days": 23,
+      "actual_sell_days": 17,
+      "pearson": 0.6854061606431507,
+      "pearson_p_naive": 1.0625708519247182e-06,
+      "spearman": 0.6789249034158733,
+      "spearman_p_naive": 1.467474071132349e-06,
+      "model_only_correct_days": 4,
+      "baseline_only_correct_days": 16,
+      "paired_mcnemar_exact_two_sided_p": 0.01181793212890625
+    },
+    "pm_skip_0": {
+      "baseline": "PM current-return contrarian",
+      "subturn": "pm",
+      "feature": "current_day_return",
+      "skip_initial_days": 0,
+      "days": 45,
+      "direction_match_rate": 0.9111111111111111,
+      "buy_recall": 0.8571428571428571,
+      "sell_recall": 1.0,
+      "balanced_accuracy": 0.9285714285714286,
+      "predicted_buy_days": 24,
+      "predicted_sell_days": 21,
+      "actual_buy_days": 28,
+      "actual_sell_days": 17,
+      "pearson": 0.6464416803890376,
+      "pearson_p_naive": 1.6115322982375864e-06,
+      "spearman": 0.7517786561264822,
+      "spearman_p_naive": 2.6502735635273566e-09,
+      "model_only_correct_days": 1,
+      "baseline_only_correct_days": 15,
+      "paired_mcnemar_exact_two_sided_p": 0.000518798828125
+    },
+    "pm_skip_5": {
+      "baseline": "PM current-return contrarian",
+      "subturn": "pm",
+      "feature": "current_day_return",
+      "skip_initial_days": 5,
+      "days": 40,
+      "direction_match_rate": 0.925,
+      "buy_recall": 0.8695652173913043,
+      "sell_recall": 1.0,
+      "balanced_accuracy": 0.9347826086956521,
+      "predicted_buy_days": 20,
+      "predicted_sell_days": 20,
+      "actual_buy_days": 23,
+      "actual_sell_days": 17,
+      "pearson": 0.8259098193461654,
+      "pearson_p_naive": 5.372171092978499e-11,
+      "spearman": 0.8602251407129458,
+      "spearman_p_naive": 1.1369391504984354e-12,
+      "model_only_correct_days": 1,
+      "baseline_only_correct_days": 14,
+      "paired_mcnemar_exact_two_sided_p": 0.0009765625
+    }
+  },
+  "decision_mechanics": {
+    "buy_rows": 1509,
+    "sell_rows": 1191,
+    "one_share_rows": 589,
+    "deterministic_fallback_rows": 0,
+    "all_orders_filled": true,
+    "mean_agent_turnover_multiple": 7.093676666666666
+  },
+  "belief_and_news_trace": {
+    "blank_belief_summary_rows": 0,
+    "blank_view_change_rows": 0,
+    "exact_duplicate_agent_belief_summaries": 3,
+    "raw_influential_news_items": 8957,
+    "mapped_influential_news_items": 143,
+    "unmapped_influential_news_items": 8814,
+    "rows_with_any_mapped_influential_news": 77,
+    "raw_id_string_items": 8619,
+    "exact_id_or_title_matches_to_turn_news": 8750,
+    "exact_id_or_title_match_rate": 0.9768895835659261,
+    "active_system_message_rows": 0
+  },
+  "llm_runtime": {
+    "api_requests": 13516,
+    "api_errors": 295,
+    "error_types": {
+      "TimeoutError": 291,
+      "JSONDecodeError": 3,
+      "RateLimitError": 1
+    },
+    "validation_retry_events": 1053,
+    "api_cost_usd": 17.28094004000007
+  },
+  "cohort": {
+    "initial_cash_counts": {
+      "100000000": 30
+    },
+    "strategy_counts": {
+      "technical": 16,
+      "value": 14
+    },
+    "news_depth_counts": {
+      "0": 10,
+      "1": 16,
+      "2": 4
+    },
+    "age_group_counts": {
+      "30대": 18,
+      "20대": 9,
+      "40대": 3
+    }
+  },
+  "persona_construct_validity": {
+    "disposition_ordinal_spearman": {
+      "rho": 0.44512618918653507,
+      "p_exploratory": 0.013706760894895361
+    },
+    "risk_ordinal_spearman": {
+      "rho": 0.5970581141133235,
+      "p_exploratory": 0.0004956223617368398
+    },
+    "interpretation": "Prompt-enactment construct checks; not human demographic effects or confirmatory tests."
+  },
+  "returns": {
+    "mean_agent_return": 0.08506903333333334,
+    "median_agent_return": 0.08433399999999999,
+    "min_agent_return": -0.020476,
+    "max_agent_return": 0.18068,
+    "buy_hold_return_open_to_final_close": 0.1071428571428572
+  }
+}

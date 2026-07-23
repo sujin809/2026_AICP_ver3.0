@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from twinmarket_kr.rn_model_pin import RN_PAPER_MODEL
+
 try:
     from dotenv import load_dotenv
 except ModuleNotFoundError:
@@ -38,6 +40,9 @@ EXPERIMENT_BASE_DB = OUTPUT_DIR / "experiment_base_sim.db"
 
 STOCK_CODE = "005930"
 COUNTERSIDE_USER_ID = "COUNTERSIDE"
+# Legacy/exploratory default only.  RN Community AB never imports this value:
+# its sealed TradePolicy fails closed unless commission, sell tax, and every
+# persisted fill fee are exactly 0.0.
 COMMISSION_RATE = 0.0005
 CIRCUIT_BREAKER = 0.30
 N_WARMUP = 3
@@ -68,7 +73,10 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-PAPER_OPENROUTER_MODEL = "qwen/qwen3.5-flash-02-23"
+# RN paper execution is deliberately pinned to this one model.  The strict RN
+# call path rejects any other model before constructing an HTTP request.
+PAPER_OPENROUTER_MODEL = RN_PAPER_MODEL
+PAPER_REASONING_DISABLED_MODEL = PAPER_OPENROUTER_MODEL
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", PAPER_OPENROUTER_MODEL)
 OPENROUTER_EMBED_MODEL = os.getenv("OPENROUTER_EMBED_MODEL", "")
 OPENROUTER_MAX_RETRIES = int(os.getenv("OPENROUTER_MAX_RETRIES", "6"))

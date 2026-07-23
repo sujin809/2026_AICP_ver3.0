@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, Mapping
 
 try:
     from openai import AsyncOpenAI
@@ -20,9 +20,65 @@ except ModuleNotFoundError:
 
 import config
 
+if TYPE_CHECKING:
+    from twinmarket_kr.rn_ab.call_policy import StrictCallPolicy
+
 
 class UnexpectedModelError(RuntimeError):
     pass
+
+
+class ReasoningPolicyError(ValueError):
+    """A call tried to remove or alter the paper model's reasoning-off body."""
+
+
+class APIAuditIntegrityError(RuntimeError):
+    """Run-local provider telemetry cannot be bound to an accepted response."""
+
+
+_PAPER_REASONING_OFF_BODY = {"effort": "none", "exclude": True}
+
+
+def _positive_int(value: Any, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"{label} must be a positive integer")
+    return int(value)
+
+
+def _slot_namespace(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("slot_namespace must be a non-empty string when supplied")
+    return value.strip()
+
+
+def _audit_path(value: Path | str | None) -> Path | None:
+    """Normalize an explicitly supplied audit file without changing legacy defaults."""
+
+    if value is None:
+        return None
+    if not isinstance(value, (Path, str)):
+        raise ValueError("audit_path must be a filesystem path when supplied")
+    path = Path(value)
+    if not path.name:
+        raise ValueError("audit_path must name a file")
+    return path
+
+
+def _audit_context(value: Mapping[str, str] | None) -> dict[str, str]:
+    """Keep audit provenance small, serializable, and unambiguous."""
+
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError("audit_context must be a string mapping when supplied")
+    normalized: dict[str, str] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not key.strip() or not isinstance(item, str) or not item.strip():
+            raise ValueError("audit_context keys and values must be non-empty strings")
+        normalized[key.strip()] = item.strip()
+    return dict(sorted(normalized.items()))
 
 
 def stable_llm_seed(base_seed: int, *parts: object) -> int:
@@ -38,12 +94,27 @@ class OpenRouterClient:
         model: str | None = None,
         max_retries: int | None = None,
         timeout: float = 120.0,
+        concurrency_limit: int | None = None,
+        slot_namespace: str | None = None,
+        audit_path: Path | str | None = None,
+        audit_context: Mapping[str, str] | None = None,
     ) -> None:
         self.api_key = api_key or config.OPENROUTER_API_KEY
         self.base_url = base_url or config.OPENROUTER_BASE_URL
         self.model = model or config.OPENROUTER_MODEL
         self.max_retries = config.OPENROUTER_MAX_RETRIES if max_retries is None else max_retries
         self.timeout = timeout
+        self.concurrency_limit = (
+            config.OPENROUTER_GLOBAL_CONCURRENCY
+            if concurrency_limit is None
+            else _positive_int(concurrency_limit, "concurrency_limit")
+        )
+        self.slot_namespace = _slot_namespace(slot_namespace)
+        # Legacy callers deliberately retain the process-wide audit location.
+        # The RN paper factory supplies a run/arm-local file plus immutable
+        # context, so a gate never has to infer a study from a shared log.
+        self.audit_path = _audit_path(audit_path)
+        self.audit_context = _audit_context(audit_context)
         self.offline = os.getenv("TWINMARKET_OFFLINE_LLM", "").strip().lower() in {"1", "true", "yes"}
         if self.offline:
             self.client = None
@@ -61,6 +132,32 @@ class OpenRouterClient:
             max_retries=0,
         )
 
+    @property
+    def is_offline(self) -> bool:
+        """Expose stub mode so a paper launcher can reject it before any work starts."""
+        return self.offline
+
+    def request_policy(self) -> dict[str, Any]:
+        """Return the legacy/default provider policy for shared exploratory code.
+
+        The RealNews Community AB runner passes its sealed strict policy through
+        :meth:`chat` explicitly.  Keeping the default here unchanged avoids
+        silently changing the historic 0720 / exploratory execution path.
+        """
+        provider: dict[str, Any] = {
+            "require_parameters": config.OPENROUTER_REQUIRE_PARAMETERS,
+            "allow_fallbacks": config.OPENROUTER_ALLOW_FALLBACKS,
+        }
+        if config.OPENROUTER_PROVIDER_ORDER:
+            provider["order"] = list(config.OPENROUTER_PROVIDER_ORDER)
+        policy: dict[str, Any] = {"provider": provider}
+        if self.model == config.PAPER_REASONING_DISABLED_MODEL:
+            # This exact object is sent under ``extra_body`` by ``chat``.
+            # ``effort: none`` disables reasoning; ``exclude`` only prevents
+            # a response trace from being returned.
+            policy["reasoning"] = dict(_PAPER_REASONING_OFF_BODY)
+        return policy
+
     async def chat(
         self,
         messages: list[dict[str, str]],
@@ -71,13 +168,18 @@ class OpenRouterClient:
         response_format: dict[str, Any] | None = None,
         temperature: float = 0.2,
         seed: int | None = None,
+        max_tokens: int | None = None,
         audit_label: str = "unspecified",
+        logical_call_id: str | None = None,
+        phase_attempt_id: str | None = None,
+        request_policy: Mapping[str, Any] | None = None,
     ) -> Any:
-        if os.getenv("TWINMARKET_OFFLINE_LLM", "").strip().lower() in {"1", "true", "yes"}:
+        if self.offline:
             return _offline_response(messages)
 
+        requested_model = str(model or self.model)
         kwargs: dict[str, Any] = {
-            "model": model or self.model,
+            "model": requested_model,
             "messages": messages,
             "temperature": temperature,
         }
@@ -89,13 +191,19 @@ class OpenRouterClient:
             kwargs["response_format"] = response_format
         if seed is not None:
             kwargs["seed"] = int(seed)
-        provider_options: dict[str, Any] = {
-            "require_parameters": config.OPENROUTER_REQUIRE_PARAMETERS,
-            "allow_fallbacks": config.OPENROUTER_ALLOW_FALLBACKS,
-        }
-        if config.OPENROUTER_PROVIDER_ORDER:
-            provider_options["order"] = config.OPENROUTER_PROVIDER_ORDER
-        kwargs["extra_body"] = {"provider": provider_options}
+        normalized_max_tokens = (
+            None if max_tokens is None else _positive_int(max_tokens, "max_tokens")
+        )
+        if normalized_max_tokens is not None:
+            kwargs["max_tokens"] = normalized_max_tokens
+        supplied_request_policy = (
+            dict(request_policy) if request_policy is not None else self.request_policy()
+        )
+        final_request_policy = _enforce_paper_reasoning_off(
+            requested_model,
+            supplied_request_policy,
+        )
+        kwargs["extra_body"] = final_request_policy
 
         delay = 1.0
         last_error: Exception | None = None
@@ -106,7 +214,10 @@ class OpenRouterClient:
             started = time.perf_counter()
             response = None
             try:
-                async with _global_openrouter_slot(config.OPENROUTER_GLOBAL_CONCURRENCY):
+                async with _global_openrouter_slot(
+                    self.concurrency_limit,
+                    slot_namespace=self.slot_namespace,
+                ):
                     response = await asyncio.wait_for(
                         self.client.chat.completions.create(**kwargs),
                         timeout=self.timeout + 5,
@@ -117,7 +228,7 @@ class OpenRouterClient:
                         f"OpenRouter returned {returned_model!r} for requested model "
                         f"{kwargs['model']!r}"
                     )
-                _record_api_audit(
+                audit_row = _record_api_audit(
                     label=audit_label,
                     requested_model=str(kwargs["model"]),
                     seed=seed,
@@ -125,7 +236,25 @@ class OpenRouterClient:
                     latency_seconds=time.perf_counter() - started,
                     prompt_sha256=prompt_sha256,
                     response=response,
+                    request_policy=final_request_policy,
+                    temperature=temperature,
+                    response_format=response_format,
+                    max_tokens=normalized_max_tokens,
+                    logical_call_id=logical_call_id,
+                    phase_attempt_id=phase_attempt_id,
+                    audit_path=getattr(self, "audit_path", None),
+                    audit_context=getattr(self, "audit_context", None),
                 )
+                if (
+                    logical_call_id
+                    and phase_attempt_id
+                    and audit_row["status"] == "provider_returned"
+                ):
+                    pending = getattr(self, "_pending_provider_audits", None)
+                    if pending is None:
+                        pending = {}
+                        self._pending_provider_audits = pending
+                    pending[(logical_call_id, phase_attempt_id)] = audit_row
                 return response
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
@@ -138,6 +267,14 @@ class OpenRouterClient:
                     prompt_sha256=prompt_sha256,
                     response=response,
                     error=exc,
+                    request_policy=final_request_policy,
+                    temperature=temperature,
+                    response_format=response_format,
+                    max_tokens=normalized_max_tokens,
+                    logical_call_id=logical_call_id,
+                    phase_attempt_id=phase_attempt_id,
+                    audit_path=getattr(self, "audit_path", None),
+                    audit_context=getattr(self, "audit_context", None),
                 )
                 if attempt >= self.max_retries or not _is_retryable_error(exc):
                     break
@@ -149,12 +286,191 @@ class OpenRouterClient:
             f"OpenRouter chat failed after {self.max_retries} attempts: {last_error}"
         ) from last_error
 
+    async def chat_strict_reasoning_off(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        policy: "StrictCallPolicy",
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+        response_format: dict[str, Any] | None = None,
+        temperature: float = 0.2,
+        seed: int | None = None,
+        max_tokens: int,
+        audit_label: str,
+        logical_call_id: str,
+        phase_attempt_id: str,
+    ) -> Any:
+        """RN-only path that forbids reasoning for the pinned paper model.
+
+        The explicit model comparison is intentional: unlike the generic
+        exploratory client, RN cannot silently move to another model merely
+        because it supports a similarly named reasoning option.
+
+        ``max_tokens`` is required (with no default) so a paper call cannot
+        accidentally rely on a provider/model default.  OpenRouter's pinned
+        provider policy also requires support for every supplied parameter.
+        """
+        if self.offline:
+            raise RuntimeError("Strict RN calls reject offline LLM stubs")
+        normalized_max_tokens = _positive_int(max_tokens, "RN strict max_tokens")
+        policy.validate()
+        if policy.model != config.PAPER_REASONING_DISABLED_MODEL:
+            raise UnexpectedModelError(
+                "RN strict path only permits "
+                f"{config.PAPER_REASONING_DISABLED_MODEL!r}, not {policy.model!r}"
+            )
+        # Keep JSON-object enforcement at the provider boundary as well as in
+        # the stage adapter.  A future direct caller of this RN-only method
+        # must not be able to silently omit the response-format contract or
+        # tune sampling while still receiving a strict reasoning-off policy.
+        from twinmarket_kr.rn_ab.call_policy import (
+            RN_STRICT_RESPONSE_FORMAT,
+            RN_STRICT_TEMPERATURE,
+        )
+
+        if (
+            isinstance(temperature, bool)
+            or not isinstance(temperature, (int, float))
+            or float(temperature) != RN_STRICT_TEMPERATURE
+        ):
+            raise ValueError(
+                "RN strict calls require the sealed temperature "
+                f"{RN_STRICT_TEMPERATURE}"
+            )
+        if response_format != dict(RN_STRICT_RESPONSE_FORMAT):
+            raise ValueError("RN strict calls require the sealed JSON-object response format")
+        final_policy = policy.as_request_policy()
+        policy.assert_final_request_policy(final_policy)
+        return await self.chat(
+            messages,
+            model=config.PAPER_REASONING_DISABLED_MODEL,
+            tools=tools,
+            tool_choice=tool_choice,
+            response_format=response_format,
+            temperature=temperature,
+            seed=seed,
+            max_tokens=normalized_max_tokens,
+            audit_label=audit_label,
+            logical_call_id=logical_call_id,
+            phase_attempt_id=phase_attempt_id,
+            request_policy=final_policy,
+        )
+
     async def ping(self) -> str:
         response = await self.chat(
             [{"role": "user", "content": "Reply with pong."}],
             temperature=0,
         )
         return response_content(response)
+
+    def record_experiment_acceptance(
+        self,
+        *,
+        logical_call_id: str,
+        phase_attempt_id: str,
+        accepted_response_sha256: str,
+    ) -> None:
+        """Append an experiment-acceptance event after strict schema validation.
+
+        The provider-attempt row is written as soon as OpenRouter returns.  It
+        is deliberately *not* called successful scientific work at that point.
+        The stage/community adapter invokes this method only after its exact
+        JSON parser, stage validator, and durable response journal have all
+        accepted the object.  On restart the method can reconstruct a missing
+        acceptance event from the immutable provider row and journal digest.
+        """
+
+        _require_sha256(accepted_response_sha256, label="accepted_response_sha256")
+        if not logical_call_id or not phase_attempt_id:
+            raise APIAuditIntegrityError(
+                "Acceptance requires logical_call_id and phase_attempt_id"
+            )
+        path = _audit_path(getattr(self, "audit_path", None))
+        if path is None:
+            raise APIAuditIntegrityError(
+                "Experiment acceptance requires an explicit run-local audit path"
+            )
+        expected_context = _audit_context(getattr(self, "audit_context", None))
+        pending = getattr(self, "_pending_provider_audits", {})
+        provider_row = pending.get((logical_call_id, phase_attempt_id))
+        if provider_row is not None:
+            _validate_provider_row_for_acceptance(
+                provider_row,
+                logical_call_id=logical_call_id,
+                accepted_response_sha256=accepted_response_sha256,
+                expected_context=expected_context,
+            )
+            acceptance = _acceptance_row(
+                provider_row,
+                accepted_response_sha256=accepted_response_sha256,
+            )
+            _append_api_audit_payload(path, acceptance)
+            pending.pop((logical_call_id, phase_attempt_id), None)
+            return
+
+        # Restart repair: the journal may already contain an accepted response
+        # while the process died before the small acceptance event was flushed.
+        # Read and append under one file lock so two recovery processes cannot
+        # create duplicate acceptance events.
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a+", encoding="utf-8") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            try:
+                handle.seek(0)
+                rows = _read_audit_handle(handle, path=path)
+                accepted = [
+                    row
+                    for row in rows
+                    if row.get("audit_event") == "experiment_acceptance"
+                    and row.get("logical_call_id") == logical_call_id
+                ]
+                if accepted:
+                    if (
+                        len(accepted) == 1
+                        and accepted[0].get("accepted_response_sha256")
+                        == accepted_response_sha256
+                    ):
+                        return
+                    raise APIAuditIntegrityError(
+                        f"Conflicting or duplicate acceptance audit for {logical_call_id}"
+                    )
+                candidates = [
+                    row
+                    for row in rows
+                    if row.get("audit_event") == "provider_attempt"
+                    and row.get("status") == "provider_returned"
+                    and row.get("logical_call_id") == logical_call_id
+                    and row.get("provider_canonical_json_sha256")
+                    == accepted_response_sha256
+                ]
+                if not candidates:
+                    raise APIAuditIntegrityError(
+                        f"No exact provider response can bind accepted journal response "
+                        f"{logical_call_id}"
+                    )
+                # Identical response bodies from repeated physical attempts are
+                # scientifically equivalent.  Bind the latest deterministic
+                # row, which is the only one that could have immediately
+                # preceded the durable journal write on a recovery path.
+                provider_row = candidates[-1]
+                _validate_provider_row_for_acceptance(
+                    provider_row,
+                    logical_call_id=logical_call_id,
+                    accepted_response_sha256=accepted_response_sha256,
+                    expected_context=expected_context,
+                )
+                acceptance = _acceptance_row(
+                    provider_row,
+                    accepted_response_sha256=accepted_response_sha256,
+                )
+                handle.seek(0, os.SEEK_END)
+                handle.write(
+                    json.dumps(acceptance, ensure_ascii=False, default=str) + "\n"
+                )
+                handle.flush()
+            finally:
+                fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def response_content(response: Any) -> str:
@@ -171,6 +487,44 @@ def response_content(response: Any) -> str:
         return ""
     message = getattr(choices[0], "message", None)
     return str(getattr(message, "content", "") or "")
+
+
+def response_finish_reason(response: Any) -> str | None:
+    """Return the first completion finish reason without accepting a default."""
+
+    if isinstance(response, dict):
+        choices = response.get("choices") or []
+        if not choices or not isinstance(choices[0], dict):
+            return None
+        value = choices[0].get("finish_reason")
+    else:
+        choices = getattr(response, "choices", None) or []
+        if not choices:
+            return None
+        value = getattr(choices[0], "finish_reason", None)
+    return value if isinstance(value, str) else None
+
+
+def _enforce_paper_reasoning_off(
+    model: str,
+    request_policy: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Put OpenRouter's exact off switch in every Qwen paper request.
+
+    This runs after all caller/default policy selection and immediately before
+    ``extra_body`` is assigned.  Thus an accidental caller merge cannot send
+    the pinned paper model without ``reasoning.effort = 'none'``.
+    """
+    final_policy = dict(request_policy)
+    if model != config.PAPER_REASONING_DISABLED_MODEL:
+        return final_policy
+    reasoning = final_policy.get("reasoning")
+    if reasoning is not None and reasoning != _PAPER_REASONING_OFF_BODY:
+        raise ReasoningPolicyError(
+            "The pinned paper model requires reasoning={'effort': 'none', 'exclude': True}"
+        )
+    final_policy["reasoning"] = dict(_PAPER_REASONING_OFF_BODY)
+    return final_policy
 
 
 def _retry_after_seconds(error: BaseException) -> float | None:
@@ -236,8 +590,17 @@ def _record_api_audit(
     prompt_sha256: str,
     response: Any | None = None,
     error: BaseException | None = None,
-) -> None:
-    path = Path(config.OPENROUTER_AUDIT_LOG)
+    request_policy: dict[str, Any] | None = None,
+    temperature: float | None = None,
+    response_format: dict[str, Any] | None = None,
+    max_tokens: int | None = None,
+    logical_call_id: str | None = None,
+    phase_attempt_id: str | None = None,
+    audit_path: Path | str | None = None,
+    audit_context: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    path = _audit_path(audit_path) or Path(config.OPENROUTER_AUDIT_LOG)
+    context = _audit_context(audit_context)
     path.parent.mkdir(parents=True, exist_ok=True)
     usage = getattr(response, "usage", None) if response is not None else None
     if hasattr(usage, "model_dump"):
@@ -247,23 +610,61 @@ def _record_api_audit(
             key: getattr(usage, key, None)
             for key in ("prompt_tokens", "completion_tokens", "total_tokens")
         }
+    usage_payload = _usage_payload(usage)
+    is_rn_experiment_attempt = bool(
+        logical_call_id
+        and phase_attempt_id
+        and context.get("artifact") == "rn_ab_strict_openrouter_attempt"
+    )
     payload = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "pid": os.getpid(),
         "label": label,
-        "status": "error" if error is not None else "success",
+        "audit_event": "provider_attempt",
+        "status": (
+            "error"
+            if error is not None
+            else ("provider_returned" if is_rn_experiment_attempt else "success")
+        ),
         "requested_model": requested_model,
         "returned_model": getattr(response, "model", None) if response is not None else None,
-        "provider": getattr(response, "provider", None) if response is not None else None,
+        "provider": _response_provider(response),
         "request_id": getattr(response, "id", None) if response is not None else None,
         "seed": seed,
         "attempt": attempt,
         "latency_seconds": round(latency_seconds, 6),
         "prompt_sha256": prompt_sha256,
-        "usage": usage,
+        "usage": usage_payload,
+        "reasoning_tokens": _reasoning_tokens(usage_payload),
+        "response_reasoning_present": _response_reasoning_present(response),
+        "finish_reason": response_finish_reason(response),
+        "provider_response_sha256": (
+            _provider_response_sha256(response) if error is None else None
+        ),
+        "provider_canonical_json_sha256": (
+            _provider_json_object_sha256(response) if error is None else None
+        ),
+        "accepted_response_sha256": None,
+        "provider_attempt_sha256": None,
+        "request_policy": request_policy or {},
+        "temperature": temperature,
+        "response_format": response_format,
+        "max_tokens": max_tokens,
+        "request_policy_sha256": hashlib.sha256(
+            json.dumps(request_policy or {}, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest(),
+        "logical_call_id": logical_call_id,
+        "phase_attempt_id": phase_attempt_id,
+        "audit_context": context,
         "error_type": type(error).__name__ if error is not None else None,
         "error": str(error) if error is not None else None,
     }
+    _append_api_audit_payload(path, payload)
+    return payload
+
+
+def _append_api_audit_payload(path: Path, payload: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         try:
@@ -273,13 +674,208 @@ def _record_api_audit(
             fcntl.flock(handle, fcntl.LOCK_UN)
 
 
+def _provider_json_object_sha256(response: Any) -> str | None:
+    """Hash canonical JSON only; stage-specific acceptance remains separate."""
+
+    raw = response_content(response)
+    try:
+        parsed = json.loads(
+            raw,
+            object_pairs_hook=_strict_audit_json_object,
+            parse_constant=_reject_audit_json_constant,
+        )
+        if not isinstance(parsed, dict):
+            return None
+        canonical = json.dumps(
+            parsed,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+    except (json.JSONDecodeError, TypeError, ValueError, OverflowError, RecursionError):
+        return None
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _provider_response_sha256(response: Any) -> str:
+    """Preserve every provider return, including malformed/non-object JSON."""
+
+    return hashlib.sha256(response_content(response).encode("utf-8")).hexdigest()
+
+
+def _strict_audit_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_audit_json_constant(value: str) -> None:
+    raise ValueError(f"non-standard JSON constant: {value}")
+
+
+def _require_sha256(value: Any, *, label: str) -> None:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(char not in "0123456789abcdef" for char in value.lower())
+    ):
+        raise APIAuditIntegrityError(f"{label} must be a lowercase SHA-256 digest")
+
+
+def _canonical_audit_sha256(value: Mapping[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            dict(value),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _validate_provider_row_for_acceptance(
+    row: Mapping[str, Any],
+    *,
+    logical_call_id: str,
+    accepted_response_sha256: str,
+    expected_context: Mapping[str, str],
+) -> None:
+    if (
+        row.get("audit_event") != "provider_attempt"
+        or row.get("status") != "provider_returned"
+        or row.get("logical_call_id") != logical_call_id
+        or row.get("provider_canonical_json_sha256") != accepted_response_sha256
+        or row.get("accepted_response_sha256") is not None
+        or row.get("provider_attempt_sha256") is not None
+        or row.get("audit_context") != dict(expected_context)
+    ):
+        raise APIAuditIntegrityError(
+            f"Provider audit does not exactly match accepted response {logical_call_id}"
+        )
+
+
+def _acceptance_row(
+    provider_row: Mapping[str, Any],
+    *,
+    accepted_response_sha256: str,
+) -> dict[str, Any]:
+    acceptance = dict(provider_row)
+    acceptance.update(
+        {
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "audit_event": "experiment_acceptance",
+            "status": "accepted",
+            "accepted_response_sha256": accepted_response_sha256,
+            "provider_attempt_sha256": _canonical_audit_sha256(provider_row),
+        }
+    )
+    return acceptance
+
+
+def _read_audit_handle(handle: Any, *, path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for line_number, line in enumerate(handle, start=1):
+        raw = line.strip()
+        if not raw:
+            continue
+        try:
+            row = json.loads(
+                raw,
+                object_pairs_hook=_strict_audit_json_object,
+                parse_constant=_reject_audit_json_constant,
+            )
+        except (json.JSONDecodeError, ValueError, RecursionError) as exc:
+            raise APIAuditIntegrityError(
+                f"Malformed audit row at {path}:{line_number}"
+            ) from exc
+        if not isinstance(row, dict):
+            raise APIAuditIntegrityError(
+                f"Non-object audit row at {path}:{line_number}"
+            )
+        rows.append(row)
+    return rows
+
+
+def _usage_payload(usage: Any) -> dict[str, Any] | None:
+    if usage is None:
+        return None
+    if isinstance(usage, dict):
+        return usage
+    if hasattr(usage, "model_dump"):
+        dumped = usage.model_dump()
+        return dumped if isinstance(dumped, dict) else {"value": dumped}
+    return {
+        key: getattr(usage, key, None)
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens", "reasoning_tokens")
+    }
+
+
+def _reasoning_tokens(usage: dict[str, Any] | None) -> int | None:
+    if usage is None:
+        return None
+    candidates: list[Any] = [usage.get("reasoning_tokens")]
+    for nested_key in ("completion_tokens_details", "prompt_tokens_details", "details"):
+        nested = usage.get(nested_key)
+        if isinstance(nested, dict):
+            candidates.append(nested.get("reasoning_tokens"))
+    for value in candidates:
+        if value is None:
+            continue
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _response_provider(response: Any | None) -> str | None:
+    if response is None:
+        return None
+    for field in ("provider", "provider_name"):
+        value = getattr(response, field, None)
+        if value:
+            return str(value)
+    if isinstance(response, dict):
+        for field in ("provider", "provider_name"):
+            if response.get(field):
+                return str(response[field])
+    return None
+
+
+def _response_reasoning_present(response: Any | None) -> bool:
+    if response is None:
+        return False
+    if isinstance(response, dict):
+        choices = response.get("choices") or []
+    else:
+        choices = getattr(response, "choices", None) or []
+    if not choices:
+        return False
+    first = choices[0]
+    message = first.get("message") if isinstance(first, dict) else getattr(first, "message", None)
+    if isinstance(message, dict):
+        values = (message.get("reasoning"), message.get("reasoning_content"))
+    else:
+        values = (getattr(message, "reasoning", None), getattr(message, "reasoning_content", None))
+    return any(value not in (None, "", [], {}) for value in values)
+
+
 @asynccontextmanager
-async def _global_openrouter_slot(limit: int):
+async def _global_openrouter_slot(limit: int, *, slot_namespace: str | None = None):
     """Cross-process semaphore shared by all six condition runners on one machine."""
     if limit < 1:
         yield
         return
     slot_dir = Path(config.OPENROUTER_SLOT_DIR)
+    if slot_namespace is not None:
+        # The directory is a concurrency namespace, not a user-facing name.
+        # Hash it so a run/condition identifier cannot influence the path.
+        slot_dir = slot_dir / hashlib.sha256(slot_namespace.encode("utf-8")).hexdigest()
     slot_dir.mkdir(parents=True, exist_ok=True)
     handle = None
     while handle is None:

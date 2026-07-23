@@ -1,0 +1,7 @@
+construct,category,agent_count,metric,value
+disposition_effect,low,12,mean_P_sell_gain_minus_P_sell_loss,0.1529851687046907
+disposition_effect,high,8,mean_P_sell_gain_minus_P_sell_loss,0.43968450579184837
+disposition_effect,medium,10,mean_P_sell_gain_minus_P_sell_loss,0.3133648901335576
+lottery_risk_preference,low,19,mean_quantity_over_feasible_max,0.5214633684290135
+lottery_risk_preference,medium,3,mean_quantity_over_feasible_max,0.5767984795744822
+lottery_risk_preference,high,8,mean_quantity_over_feasible_max,0.7058533716266806

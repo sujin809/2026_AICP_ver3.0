@@ -1,0 +1,18 @@
+metric,value,unit
+declared_scope_days,45,days
+direction_match_rate,0.6,rate
+balanced_accuracy,0.6092436974789917,rate
+daily_pearson,0.5031289728157168,correlation
+daily_spearman,0.2134387351778656,correlation
+always_buy_direction_match,0.6222222222222222,rate
+prior_market_balanced_accuracy,0.5735294117647058,rate
+first_five_day_match,0.8,rate
+post_first_five_day_match,0.575,rate
+post_first_five_day_pearson,0.01796065619183776,correlation
+mean_agent_return,0.08506903333333334,rate
+buy_hold_return,0.1071428571428572,rate
+mean_turnover_multiple,7.093676666666666,x initial capital
+one_share_rate,0.21814814814814815,rate
+belief_retry_row_rate,0.2,rate
+decision_retry_row_rate,0.07740740740740741,rate
+influential_news_unmapped_item_rate,0.9840348330914369,rate

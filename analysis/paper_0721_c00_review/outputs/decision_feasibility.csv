@@ -1,0 +1,5 @@
+feasible_action_set,turn_rows,buy_rows,sell_rows,mean_quantity,max_quantity_selected_rate
+both,2394,1385,1009,32.62447786131997,0.39557226399331663
+buy_only,124,124,0,162.55645161290323,0.31451612903225806
+sell_only,182,0,182,52.18131868131868,0.054945054945054944
+neither,0,0,0,nan,nan

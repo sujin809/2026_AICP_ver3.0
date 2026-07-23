@@ -1,0 +1,20 @@
+field,value,population_count,population_share,active_cohort_count,active_cohort_share
+gender,female,57,0.57,17,0.5667
+gender,male,43,0.43,13,0.4333
+age_group,20대,9,0.09,9,0.3
+age_group,30대,18,0.18,18,0.6
+age_group,40대,23,0.23,3,0.1
+age_group,50대,26,0.26,0,0.0
+age_group,60대,17,0.17,0,0.0
+age_group,70대,6,0.06,0,0.0
+age_group,80대 이상,1,0.01,0,0.0
+ini_cash,100000000,90,0.9,30,1.0
+ini_cash,1000000000,10,0.1,0,0.0
+strategy,technical,58,0.58,16,0.5333
+strategy,value,42,0.42,14,0.4667
+news_depth,0,30,0.3,10,0.3333
+news_depth,1,55,0.55,16,0.5333
+news_depth,2,15,0.15,4,0.1333
+user_type,big_influencer,1,0.01,1,0.0333
+user_type,ordinary,91,0.91,27,0.9
+user_type,small_influencer,8,0.08,2,0.0667

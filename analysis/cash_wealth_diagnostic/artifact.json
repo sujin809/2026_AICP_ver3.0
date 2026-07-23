@@ -1,0 +1,151 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "초기자본과 현금 제약이 에이전트 행동에 미친 영향",
+    "description": "완료 로그의 자산 cohort 구성과 현금 잔액이 belief·주문에 반영된 사례를 감사한 기술 보고서",
+    "generatedAt": "2026-07-21T00:00:00+09:00",
+    "cards": [
+      {
+        "id": "intended_high_wealth_share",
+        "description": "100명 persona 모집단에서 초기자본 10억 원으로 설계된 비율",
+        "dataset": "cohort_metrics",
+        "sourceId": "cohort_audit",
+        "metrics": [
+          {"label": "설계상 10억 비율", "field": "intended_high_wealth_share", "format": "percent"}
+        ]
+      },
+      {
+        "id": "actual_high_wealth_agents",
+        "description": "완료된 30명 실험 cohort에 실제 포함된 초기자본 10억 원 에이전트 수",
+        "dataset": "cohort_metrics",
+        "sourceId": "cohort_audit",
+        "metrics": [
+          {"label": "실제 10억 에이전트", "field": "actual_high_wealth_agents", "format": "number"}
+        ]
+      },
+      {
+        "id": "active_agents",
+        "description": "각 완료 로그에서 확인된 활성 에이전트 수",
+        "dataset": "cohort_metrics",
+        "sourceId": "cohort_audit",
+        "metrics": [
+          {"label": "실험 cohort", "field": "active_agents", "format": "number"}
+        ]
+      }
+    ],
+    "charts": [
+      {
+        "id": "cohort_chart",
+        "title": "초기자본 집단별 에이전트 수",
+        "subtitle": "persona 모집단과 실제 30명 실행 cohort 비교",
+        "type": "bar",
+        "dataset": "cohort_chart_data",
+        "sourceId": "cohort_audit",
+        "valueFormat": "number",
+        "encodings": {
+          "x": {"field": "scope", "type": "nominal", "label": "범위"},
+          "y": {"field": "agent_count", "type": "quantitative", "label": "에이전트 수"},
+          "color": {"field": "capital_group", "type": "nominal", "label": "초기자본"},
+          "tooltip": [
+            {"field": "capital_group", "type": "nominal", "label": "초기자본"},
+            {"field": "agent_count", "type": "quantitative", "label": "에이전트 수"}
+          ]
+        }
+      }
+    ],
+    "sources": [
+      {
+        "id": "cohort_audit",
+        "label": "Persona DB·완료 로그·cohort 선택 코드 감사",
+        "path": "analysis/cash_wealth_diagnostic/source_notes.md",
+        "query": {
+          "engine": "duckdb",
+          "language": "sql",
+          "sql": "WITH population AS (SELECT agent_id, \"운용자산\" AS capital_group FROM read_csv_auto('data/fixed_slots.csv', header=true)), active AS (SELECT DISTINCT agent.agent_id AS agent_id FROM read_json_auto('outputs/logs/*/agent_turns.jsonl', format='newline_delimited')), scoped AS (SELECT 'persona 모집단' AS scope, capital_group FROM population UNION ALL SELECT '실제 완료 로그 cohort' AS scope, p.capital_group FROM active a JOIN population p USING (agent_id)) SELECT scope, capital_group, COUNT(*) AS agent_count FROM scoped GROUP BY scope, capital_group ORDER BY scope, capital_group",
+          "description": "Persona 초기자본 분포, 완료 로그 활성 cohort, 30명 선택 구현을 대조한다."
+        }
+      },
+      {
+        "id": "c11_cash_cases",
+        "label": "C11 agent-turn 현금 제약 사례",
+        "path": "outputs/logs/simulation_20260715_000826_158697_23249/agent_turns.jsonl",
+        "query": {
+          "engine": "duckdb",
+          "language": "sql",
+          "sql": "SELECT date, context.subturn AS subturn, turn, agent.agent_id AS agent_id, context.portfolio_summary, belief.belief_summary, belief.view_change, decision.action, decision.quantity, decision.reason, decision.risk_control FROM read_json_auto('outputs/logs/simulation_20260715_000826_158697_23249/agent_turns.jsonl', format='newline_delimited') WHERE agent.agent_id IN ('A019','A007','A012') ORDER BY agent_id, turn",
+          "description": "C11에서 결정 전 현금과 belief·주문을 동일 agent-turn 단위로 연결한다."
+        }
+      }
+    ],
+    "blocks": [
+      {"id": "title", "type": "markdown", "body": "# 초기자본과 현금 제약이 에이전트 행동에 미친 영향"},
+      {"id": "technical_summary", "type": "markdown", "body": "## 기술 요약\n\n**현금 잔액이 belief와 주문에 반영된 명확한 사례는 있다.** 동일 에이전트 A019는 현금 1억 원일 때 200주를 매수했지만, 잔액이 48만 원으로 줄자 낙관적 belief를 유지하면서 1주만 매수했고, 같은 날 PM에는 현금 29만 원 상태에서 장기 가치 판단을 유지하면서도 1주를 매도했다.\n\n**그러나 초기자본 1억 대 10억 비교는 현재 완료 로그로 할 수 없다.** persona DB에는 10억 에이전트가 10% 존재하지만, 실제 30명 cohort는 A001~A030으로만 구성돼 전원이 1억 원이다. 따라서 자산별 취약성을 논문에서 분석하려면 cohort를 층화해 다시 실행해야 한다."},
+      {"id": "headline_metrics", "type": "metric-strip", "cardIds": ["intended_high_wealth_share", "actual_high_wealth_agents", "active_agents"]},
+      {"id": "cohort_finding", "type": "markdown", "body": "## 10억 persona는 설계에는 있지만 실제 30명 실험에는 없다\n\n100명 모집단은 1억 원 90명과 10억 원 10명으로 올바르게 구성돼 있다. 문제는 실행 cohort 선택이다. 현재 코드는 agent id로 정렬된 목록에서 앞 30명을 선택하며, 첫 10억 에이전트가 A039라서 A001~A030에는 고액 집단이 없다. 이 때문에 현재 완료 로그의 ‘자산가’ 배지는 초기자본 10억을 뜻하지 않고, 실행 중 상대적 총자산 상위 20%를 뜻한다."},
+      {"id": "cohort_chart_block", "type": "chart", "chartId": "cohort_chart"},
+      {"id": "cash_finding", "type": "markdown", "body": "## 현금 고갈은 낙관적 belief를 소량 주문과 유동성 매도로 바꾼다\n\n가장 강한 사례는 A019다. 2월 27일에는 현금 1억 원으로 200주를 매수했지만, 3월 11일 AM에는 현금이 48만 원으로 줄어 1주만 매수했다. 같은 날 PM에는 반도체 가치와 장기 보유 판단을 유지했음에도 매수 가능 현금이 부족해 1주를 매도했다. 이는 주문 방향이 정보 belief뿐 아니라 포트폴리오 실행 가능성에 의해 결정된다는 직접적인 로그 증거다.\n\nA007과 A012도 각각 현금 비중 7% 미만, 현금 약 150만 원 상태에서 저평가 또는 장기 가치 관점을 유지하면서 현금 확보를 위해 매도했다. 따라서 매도 주문을 곧바로 bearish belief로 해석하면 안 된다."},
+      {"id": "cash_cases_detail", "type": "markdown", "body": "### 대표 로그 사례\n\n- **A019 · 2026-02-27 AM** — 현금 1억 원, ‘신중한 매수’ belief, 200주 매수\n- **A019 · 2026-03-11 AM** — 현금 48만 원, 저평가 belief 강화, 최대 가능 수량 1주 매수\n- **A019 · 2026-03-11 PM** — 현금 29만 원, 장기 가치 판단 유지, 매수 불가로 1주 매도\n- **A007 · 2026-03-11 PM** — 현금 약 673만 원, 현금 비중 7% 미만이라 10주 매도\n- **A012 · 2026-03-11 PM** — 현금 약 150만 원, 장기 저평가 관점은 유지하면서 3주 매도"},
+      {"id": "scope_definitions", "type": "markdown", "body": "## 범위와 측정 정의\n\n분석 단위는 `agent × AM/PM turn`이다. 결정 전 현금은 주문을 생성하기 직전의 포트폴리오 요약에서 읽었고, 표현된 belief는 belief summary와 view change로 정의했다. 행동은 최종 decision의 buy/sell과 수량이다.\n\n행동 사례는 chunk 초기화 문제가 없는 C11 로그만 사용했다. cohort 구성은 완료 로그 6개 전체의 활성 agent id와 persona DB를 대조했다."},
+      {"id": "method", "type": "markdown", "body": "## 감사 방법\n\n1. persona DB에서 초기자본별 인원과 10억 에이전트 id를 집계했다.\n2. 완료 로그마다 활성 agent id를 추출해 persona 초기자본과 대조했다.\n3. C11에서 같은 에이전트의 결정 전 현금, belief, 주문 방향·수량, 주문 사유를 turn 순서로 연결했다.\n4. ‘현금 부족’, ‘현금 고갈’, ‘유동성 확보’, ‘최대 가능 수량’처럼 주문 메커니즘을 명시한 사례만 핵심 근거로 채택했다."},
+      {"id": "limitations", "type": "markdown", "body": "## 한계와 강건성 경계\n\n이 결과는 현금이 판단문과 주문에 실제로 사용됐다는 진단 증거이지, 초기자본의 인과효과 추정치는 아니다. 현금 잔액은 이전 주문과 가격 변화의 결과라 내생적이다. 또한 buy/sell-only 환경에서는 hold가 불가능하므로, A019처럼 매수 불가능 상태에서 최소 1주 매도가 발생할 수 있다.\n\n따라서 논문에서는 `expressed belief`, `desired direction`, `feasible action`을 개념적으로 구분해 해석해야 한다. 별도 preferred-direction 필드를 새로 추가하지 않더라도, 최소한 주문 가능 수량과 현금 제약 여부를 사후 통제해야 한다."},
+      {"id": "next_steps", "type": "markdown", "body": "## 권장 다음 단계\n\n- 자산별 취약성을 연구하려면 30명을 **1억 27명 + 10억 3명**으로 층화 선택한다.\n- 같은 10억 agent id 3명을 모든 6개 조건에 고정해 조건 간 cohort를 동일하게 유지한다.\n- 분석에서는 초기자본 집단과 현재 현금비중을 분리한다. 초기자본은 사전 특성이고, 현재 현금비중은 시간에 따라 변하는 포트폴리오 상태다.\n- 주문 방향 분석에는 `max_buy_quantity`, 현금비중, 보유주식 수, 1주 주문 여부를 통제하거나 층화한다."},
+      {"id": "further_questions", "type": "markdown", "body": "## 결정이 필요한 질문\n\n현재 실행 중인 C00을 그대로 유지하면 빠르지만 자산별 취약성 분석은 포기해야 한다. 반대로 10% 고액자산가 구성을 논문의 핵심 분석축으로 쓸 경우, cohort 선택을 수정하고 C00을 포함한 6개 조건을 동일 cohort로 다시 실행하는 편이 타당하다."}
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "generatedAt": "2026-07-21T00:00:00+09:00",
+    "status": "ready",
+    "datasets": {
+      "cohort_metrics": [
+        {"intended_high_wealth_share": 0.1, "actual_high_wealth_agents": 0, "active_agents": 30}
+      ],
+      "cohort_comparison": [
+        {"order": 1, "scope": "persona 모집단", "one_hundred_million": 90, "one_billion": 10, "interpretation": "설계상 10%가 초기자본 10억"},
+        {"order": 2, "scope": "실제 30명 실행 cohort", "one_hundred_million": 30, "one_billion": 0, "interpretation": "A001~A030만 선택되어 고액 집단 누락"}
+      ],
+      "cohort_chart_data": [
+        {"scope": "설계", "capital_group": "1억", "agent_count": 90},
+        {"scope": "설계", "capital_group": "10억", "agent_count": 10},
+        {"scope": "실행", "capital_group": "1억", "agent_count": 30},
+        {"scope": "실행", "capital_group": "10억", "agent_count": 0}
+      ],
+      "cash_cases": [
+        {"order": 1, "date_turn": "2026-02-27 AM", "agent": "A019", "cash_before": 100000000, "expressed_belief": "가치투자 관점에서 신중한 매수", "action": "매수 200주", "cash_mechanism": "현금 여력을 남기는 분할 매수"},
+        {"order": 2, "date_turn": "2026-03-11 AM", "agent": "A019", "cash_before": 482900, "expressed_belief": "자사주 소각으로 저평가 근거 강화", "action": "매수 1주", "cash_mechanism": "현금 48만 원으로 최대 가능 수량이 1주"},
+        {"order": 3, "date_turn": "2026-03-11 PM", "agent": "A019", "cash_before": 289900, "expressed_belief": "반도체 가치와 장기 보유 판단 유지", "action": "매도 1주", "cash_mechanism": "현금 부족·매수 불가로 최소 수량 매도"},
+        {"order": 4, "date_turn": "2026-03-11 PM", "agent": "A007", "cash_before": 6731400, "expressed_belief": "업황 회복은 인정하되 관망", "action": "매도 10주", "cash_mechanism": "현금 비중 7% 미만이라 유동성 확보"},
+        {"order": 5, "date_turn": "2026-03-11 PM", "agent": "A012", "cash_before": 1497500, "expressed_belief": "장기 저평가 관점 유지", "action": "매도 3주", "cash_mechanism": "현금 부족으로 방어력 약화, 소량 매도"}
+      ]
+    },
+    "accessIssues": []
+  },
+  "sources": [
+    {
+      "id": "cohort_audit",
+      "query": {
+        "engine": "duckdb",
+        "language": "sql",
+        "sql": "WITH population AS (SELECT agent_id, \"운용자산\" AS capital_group FROM read_csv_auto('data/fixed_slots.csv', header=true)), active AS (SELECT DISTINCT agent.agent_id AS agent_id FROM read_json_auto('outputs/logs/*/agent_turns.jsonl', format='newline_delimited')), scoped AS (SELECT 'persona 모집단' AS scope, capital_group FROM population UNION ALL SELECT '실제 완료 로그 cohort' AS scope, p.capital_group FROM active a JOIN population p USING (agent_id)) SELECT scope, capital_group, COUNT(*) AS agent_count FROM scoped GROUP BY scope, capital_group ORDER BY scope, capital_group",
+        "description": "Persona 초기자본 분포, 완료 로그 활성 cohort, 30명 선택 구현을 대조한다.",
+        "tables_used": ["outputs/sys_100.db.agents", "outputs/logs/*/agent_turns.jsonl", "twinmarket_kr/simulation.py"],
+        "filters": ["완료 로그 6개", "활성 agent id", "max_agents=30"],
+        "executed_at": "2026-07-21T00:00:00+09:00"
+      }
+    },
+    {
+      "id": "c11_cash_cases",
+      "query": {
+        "engine": "duckdb",
+        "language": "sql",
+        "sql": "SELECT date, context.subturn AS subturn, turn, agent.agent_id AS agent_id, context.portfolio_summary, belief.belief_summary, belief.view_change, decision.action, decision.quantity, decision.reason, decision.risk_control FROM read_json_auto('outputs/logs/simulation_20260715_000826_158697_23249/agent_turns.jsonl', format='newline_delimited') WHERE agent.agent_id IN ('A019','A007','A012') ORDER BY agent_id, turn",
+        "description": "C11에서 결정 전 현금과 belief·주문을 동일 agent-turn 단위로 연결한다.",
+        "tables_used": ["outputs/logs/simulation_20260715_000826_158697_23249/agent_turns.jsonl"],
+        "filters": ["A019 연속 사례", "A007·A012 반례", "명시적 현금 제약 문구"],
+        "executed_at": "2026-07-21T00:00:00+09:00"
+      }
+    }
+  ]
+}
