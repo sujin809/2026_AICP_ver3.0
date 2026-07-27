@@ -1,0 +1,460 @@
+{
+  "project": {
+    "name": "TwinMarket RN Community AB 실험 — 뉴스 파이프라인 재구축",
+    "status_date": "2026-07-27",
+    "description": "삼성전자(005930) LLM 에이전트 시장 시뮬레이션용 뉴스 데이터 준비",
+    "user_email": "e62974347@gmail.com",
+    "working_directory": "/Users/sujinjung/Desktop/felab/aicp/2026_AICP_ver2.0-junyoung"
+  },
+  "completed": {
+    "news_crawling": {
+      "status": "완료 · 검증 완료",
+      "target_period": "2026-02-01 ~ 2026-06-30",
+      "experiment_window": "2026-02-27 ~ 2026-06-01 (95일)",
+      "total_articles_raw": 6187,
+      "total_articles_validated": 2995,
+      "sources": [
+        {
+          "name": "삼성전자 키워드 검색",
+          "file": "samsung.jsonl",
+          "size_mb": 16,
+          "estimated_count": 4689
+        },
+        {
+          "name": "반도체 섹션",
+          "file": "semiconductor.jsonl",
+          "size_mb": 3.0,
+          "estimated_count": 304
+        },
+        {
+          "name": "거시경제 경제정책 섹션",
+          "file": "macro_economic-policy.jsonl",
+          "size_mb": 2.9
+        },
+        {
+          "name": "거시경제 지표 섹션",
+          "file": "macro_business-index.jsonl",
+          "size_mb": 2.2
+        },
+        {
+          "name": "거시경제 무역 섹션",
+          "file": "macro_trade.jsonl",
+          "size_mb": 1.0
+        }
+      ],
+      "merged_file": "merged_news.jsonl (21MB)",
+      "metadata_fields": [
+        "url",
+        "title",
+        "body",
+        "date",
+        "time",
+        "published_at",
+        "modified_at",
+        "effective_at",
+        "gap_hours",
+        "keep_12h",
+        "buckets",
+        "bucket",
+        "sections"
+      ]
+    },
+    "filtering_criteria": {
+      "status": "완료 · 문서화",
+      "body_length_filter": {
+        "type": "자동",
+        "threshold_chars": 150,
+        "excluded_count": 77,
+        "excluded_percentage": 1.2,
+        "reason": "요약 규격(150~200자)과 모순"
+      },
+      "relevance_filter": {
+        "type": "LLM 판정 (Sonnet 5)",
+        "target_buckets": ["반도체", "거시경제"],
+        "excluded_bucket": "삼성전자",
+        "temperature": 0.0,
+        "keep_categories": [
+          "반도체·전자 산업",
+          "거시금융 지표·정책 (금리·환율·통화량·유가·수출입·증시·안전자산)",
+          "관세·통상 (품목 무관)",
+          "정부 정책·규제",
+          "공급망"
+        ],
+        "drop_categories": [
+          "사회·복지·인구 이슈",
+          "개인 생활물가·생활정보",
+          "문화·예술·스포츠·연예",
+          "항공·여행업",
+          "부동산 생활정보",
+          "정치인 개인사",
+          "지역 행사·사회공헌"
+        ],
+        "principle": "의심의 이익은 KEEP (정보환경 왜곡 방지)"
+      },
+      "validation": [
+        {
+          "round": 1,
+          "samples": 40,
+          "keep": 20,
+          "drop": 20,
+          "exclude_rate": 50.0,
+          "issues": "통화량·관세·중앙은행 금매입을 잘못 drop"
+        },
+        {
+          "round": 2,
+          "samples": 40,
+          "keep": 23,
+          "drop": 17,
+          "exclude_rate": 42.5,
+          "issues_fixed": 3,
+          "false_positives": 0,
+          "notes": "프롬프트 수정 후 오판 전원 교정"
+        },
+        {
+          "round": 3,
+          "focus": "항공 기준 검증",
+          "samples": 9,
+          "keep": 8,
+          "drop": 1,
+          "findings": "문자열 매칭 위험성 확인 (엔비디아 CEO 방한 사례 등)"
+        }
+      ],
+      "documentation": [
+        "NEWS_RECRAWL_PLAN.md (§5-3)",
+        "News_Scraper/FILTERING_CRITERIA.md"
+      ]
+    },
+    "scripts_written": [
+      {
+        "file": "News_Scraper/filter_relevance.py",
+        "purpose": "LLM 관련성 판정",
+        "model": "anthropic/claude-sonnet-5",
+        "temperature": 0.0,
+        "input": "title, summary, body",
+        "output": "keep / drop + reason (1줄)"
+      },
+      {
+        "file": "News_Scraper/apply_filters.py",
+        "purpose": "두 필터 순차 적용 + 최종 DB 생성",
+        "inputs": [
+          "merged_news.jsonl",
+          "relevance.jsonl"
+        ],
+        "outputs": [
+          "filtered_news.jsonl",
+          "excluded_news.jsonl (감사용)"
+        ],
+        "reports": "statistics (버킷별 일별 가용량)"
+      }
+    ],
+    "summary_prompt_revision": {
+      "status": "완료",
+      "model": "anthropic/claude-sonnet-5",
+      "temperature": 0.2,
+      "reasoning": "forced off via extra_body",
+      "changes": [
+        "주가 영향 정보 우선 강조",
+        "해당 기사만 기반 (교차 참조 금지)",
+        "할루시네이션 방지 명시",
+        "원문 수치 보존 강조"
+      ],
+      "record_fields": [
+        "summary_chars",
+        "summary_length_ok",
+        "summary_attempts",
+        "summary_model",
+        "summary_temperature",
+        "summary_reasoning",
+        "summary_prompt_sha256"
+      ]
+    }
+  },
+  "in_progress": {
+    "summary_revision": {
+      "status": "완료",
+      "description": "모든 기사 요약 검증 및 개선",
+      "progress": {
+        "total_completed": 2995,
+        "folders": [
+          {
+            "name": "macro_economic-policy_split",
+            "articles": 990,
+            "summary_revised": 948,
+            "revision_rate": "95.6%"
+          },
+          {
+            "name": "macro_trade_split",
+            "articles": 310,
+            "summary_revised": 310,
+            "revision_rate": "100%"
+          },
+          {
+            "name": "semiconductor_split",
+            "articles": 990,
+            "summary_revised": 948,
+            "revision_rate": "95.7%"
+          },
+          {
+            "name": "macro_business-index_split",
+            "articles": 705,
+            "summary_revised": 694,
+            "revision_rate": "98.4%"
+          }
+        ]
+      }
+    }
+  },
+  "pending": {
+    "remaining_tasks": [
+      {
+        "id": "A",
+        "task": "기사 배치 검증",
+        "status": "완료",
+        "date": "2026-07-27",
+        "results": {
+          "target_period": "2026-02-27 ~ 2026-06-01 (95일)",
+          "target_articles": 1900,
+          "actual_articles": 1558,
+          "coverage": "82.0%",
+          "note": "저조 구간 37일, 과다 구간 14일 → 정규화 필요"
+        }
+      },
+      {
+        "id": "B",
+        "task": "최종 통계 리포트 생성",
+        "status": "완료",
+        "date": "2026-07-27",
+        "files": [
+          "최종통계_2026-07-27.md",
+          "기사배치검증_2026-07-27.md"
+        ],
+        "statistics": {
+          "total_articles": 2995,
+          "summary_length_compliance": {
+            "macro_economic-policy_split": "91.6%",
+            "macro_trade_split": "99.7%",
+            "semiconductor_split": "92.6%"
+          },
+          "filtering_ratio": {
+            "keep": "1633 (71.3%)",
+            "drop": "657 (28.7%)"
+          }
+        }
+      },
+      {
+        "id": "C",
+        "task": "PROJECT_STATUS 업데이트",
+        "status": "진행 중",
+        "date": "2026-07-27",
+        "updates": [
+          "검증된 폴더 정보 추가",
+          "타임스탐프 수정 현황 반영",
+          "요약 개선 완료율 업데이트",
+          "다음 단계 작업 계획 추가"
+        ]
+      },
+      {
+        "id": "D",
+        "task": "에이전트 코드 수정",
+        "status": "미시작",
+        "depends_on": "C",
+        "code_changes": [
+          "twinmarket_kr/agents/news_agent.py 수정",
+          "타임스탐프 데이터 경로 변경 (outputs/*_split/ 사용)",
+          "버킷별 쿼터 적용 (10/6/4)",
+          "Seed 고정 (42)",
+          "backfill 로직 제거"
+        ],
+        "target_start_date": "2026-02-27",
+        "per_turn": 10,
+        "articles_per_day": 20
+      },
+      {
+        "id": "E",
+        "task": "git 푸시 및 실험 실행",
+        "status": "미시작",
+        "depends_on": "D",
+        "branch": "sujin_0724",
+        "experiment": "RN Community AB (100 에이전트, 45거래일)"
+      }
+    ]
+  },
+  "budget": {
+    "openrouter": {
+      "purchased_credits": 45.0,
+      "total_usage": 29.26,
+      "today_usage": 1.95,
+      "remaining_balance": 15.74,
+      "currency": "USD"
+    },
+    "future_needs": {
+      "relevance_filtering_experiment_window": {
+        "articles": 527,
+        "estimated_cost": 2.6
+      },
+      "relevance_filtering_full": {
+        "articles": 1728,
+        "estimated_cost": 8.5
+      },
+      "summarization_experiment_window": {
+        "articles": 1950,
+        "estimated_cost": 23,
+        "assumptions": "Sonnet 5, 평균 본문 1327자, 재시도 포함"
+      },
+      "summarization_full": {
+        "articles": 5250,
+        "estimated_cost": 63
+      },
+      "total_experiment_window": {
+        "cost": 25.6,
+        "remaining": 15.74,
+        "shortfall": "~$10 (실험창만 해도 부족)"
+      }
+    }
+  },
+  "key_decisions": [
+    {
+      "decision": "소스: 매일경제(mk) 단일",
+      "status": "✅ 확정",
+      "reason": "한경 제외, 원래 의도 mk-only 반영"
+    },
+    {
+      "decision": "삼성전자 검색: 제목 ∪ 본문",
+      "status": "✅ 확정",
+      "validation": "2일 실측 91% 커버, 추가 키워드 순증 4건"
+    },
+    {
+      "decision": "선정 방식: 랜덤 (중요도 미사용)",
+      "status": "✅ 확정",
+      "reasons": [
+        "가짜뉴스 처치 독립적",
+        "양 arm 동일 뉴스 → 대조 무결",
+        "중요도 점수 주관성·버그·불일치"
+      ]
+    },
+    {
+      "decision": "부족분: 보충 안 함",
+      "status": "✅ 확정",
+      "reason": "버킷 구성비 왜곡 방지"
+    },
+    {
+      "decision": "필터링: LLM 관련성 추가",
+      "status": "✅ 확정",
+      "reason": "섹션 브라우징 특성상 사회·생활 기사 다량 포함"
+    },
+    {
+      "decision": "요약 모델 및 결제 방식",
+      "status": "⏳ 미결정",
+      "waiting_for": "사용자 A/B/C안 선택"
+    }
+  ],
+  "hard_constraints": [
+    "Reasoning OFF: {\"effort\":\"none\",\"exclude\":true} (모든 LLM)",
+    "모델 핀: anthropic/claude-sonnet-5",
+    "프롬프트 해시: 모든 요약 레코드에 기록",
+    "Temperature 고정: 요약 0.2",
+    "기준 사전 고정: 결과 보고 후 조정 금지"
+  ],
+  "experiment_settings": {
+    "agents": 100,
+    "duration_trading_days": 45,
+    "period_start": "2026-02-27",
+    "period_end": "2026-05-04",
+    "arms": [
+      {
+        "name": "Community OFF",
+        "community_enabled": false
+      },
+      {
+        "name": "Community ON",
+        "community_enabled": true
+      }
+    ],
+    "news_exposure": {
+      "per_turn": 20,
+      "per_day": 40,
+      "turns_per_day": 2,
+      "bucket_quota": {
+        "삼성전자": 10,
+        "반도체": 6,
+        "거시경제": 4
+      },
+      "selection_method": "seed 고정 균등 무작위",
+      "fake_news": "10 real + 1 fake (turn별)"
+    },
+    "memory": "STB → 분석 → 결정 → 후채우기 LTB (4단계)"
+  },
+  "file_structure": {
+    "crawl_directory": "outputs/crawl/",
+    "scripts_directory": "News_Scraper/",
+    "documents": [
+      "NEWS_RECRAWL_PLAN.md",
+      "News_Scraper/FILTERING_CRITERIA.md",
+      "PROJECT_STATUS_2026-07-27.md",
+      "PROJECT_STATUS_2026-07-27.json"
+    ]
+  },
+  "next_actions_priority": [
+    {
+      "priority": 1,
+      "status": "✅ 완료",
+      "action": "기사 배치 검증",
+      "completion_date": "2026-07-27",
+      "result": "커버율 82.0%, 정규화 필요"
+    },
+    {
+      "priority": 2,
+      "status": "✅ 완료",
+      "action": "최종 통계 리포트 생성",
+      "completion_date": "2026-07-27",
+      "files": ["최종통계_2026-07-27.md", "기사배치검증_2026-07-27.md"]
+    },
+    {
+      "priority": 3,
+      "status": "🔄 진행 중",
+      "action": "PROJECT_STATUS 업데이트",
+      "target_completion": "2026-07-27 18:00",
+      "updates_needed": [
+        "검증 완료 상태 반영",
+        "통계 데이터 업데이트",
+        "다음 단계 작업 계획"
+      ]
+    },
+    {
+      "priority": 4,
+      "status": "⏳ 대기",
+      "action": "에이전트 코드 수정 (news_agent.py)",
+      "depends_on": "3",
+      "changes": [
+        "타임스탐프 데이터 경로 변경",
+        "버킷별 쿼터 설정 (10/6/4)",
+        "Seed 고정 (42)",
+        "기사 선택 로직 업데이트"
+      ]
+    },
+    {
+      "priority": 5,
+      "status": "⏳ 대기",
+      "action": "git 푸시 (sujin_0724 브랜치)",
+      "depends_on": "4",
+      "description": "최종 데이터 및 코드 변경 커밋"
+    },
+    {
+      "priority": 6,
+      "status": "⏳ 대기",
+      "action": "실험 실행 (RN Community AB)",
+      "depends_on": "5",
+      "details": {
+        "agents": 100,
+        "duration": "45 trading days",
+        "period": "2026-02-27 ~ 2026-06-01"
+      }
+    }
+  ],
+  "contact": {
+    "user_email": "e62974347@gmail.com",
+    "environment": "/Users/sujinjung/Desktop/felab/aicp/2026_AICP_ver2.0-junyoung",
+    "python_version": "3.12 (via .venv)",
+    "test_suite": "314/314 pass ✅"
+  }
+}
