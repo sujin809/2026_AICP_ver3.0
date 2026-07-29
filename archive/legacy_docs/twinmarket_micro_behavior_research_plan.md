@@ -1,5 +1,7 @@
 # 외생 가격 환경에서의 LLM 개인투자자 행동 재현과 정보환경 개입
 
+> 보존 구분: 과거 연구계획 provenance. 현재 실행·정책 정본이 아니다.
+
 ---
 
 ## 1. Motivation: 가격 재현이 아닌 개인 행동의 재현
@@ -186,7 +188,7 @@ news depth 1·2 에이전트의 게시 여부 결정 및 게시
 
 ### 3.5 가짜뉴스 생성 방법론: 예측 가능성 기반 phase injection
 
-현재 실행에 사용된 `processed_news_injection_bearish.csv` 및 `processed_news_injection_bullish.csv`는 [fake_news_phase_stimulus_review.md](fake_news_phase_stimulus_review.md)의 **예측 가능성 기반 phase injection** 검토 일정에 기초한다. 두 파일의 manifest는 각각 30개의 synthetic row, `append` 주입 방식, 그리고 에이전트 입력에서 가짜 라벨을 제거했다는 설정을 기록한다.
+현재 실행에 사용된 `processed_news_injection_bearish.csv` 및 `processed_news_injection_bullish.csv`는 현재 [실험 설계](../../EXPERIMENT_DESIGN.md)의 후속 fake-news 축으로만 해석한다. 두 파일의 manifest는 각각 30개의 synthetic row, `append` 주입 방식, 그리고 에이전트 입력에서 가짜 라벨을 제거했다는 설정을 기록한다.
 
 #### 사건 앵커와 누출 통제
 

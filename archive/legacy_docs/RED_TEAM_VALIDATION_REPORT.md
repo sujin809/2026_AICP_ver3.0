@@ -1,5 +1,7 @@
 # RN Community AB 적대적 검증 보고서
 
+> 보존 구분: 과거 검증 결과. 현재 구현·실행 판정 정본이 아니다.
+
 검증일: 2026-07-23 KST  
 대상: Samsung `005930` 실제뉴스 `RN_COMM_OFF` / `RN_COMM_ON` 100-agent 연구 경로  
 기준 코드: `samsung-baseline-0720` / `8604f9aec041c9929e327a90cc9025b650e9fab6`  
@@ -50,30 +52,31 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. /opt/homebrew/bin/python3.12 -m unittest 
 
 ### 1. 100명 동시성·재시작
 
-- [`runner.py`](twinmarket_kr/rn_ab/runner.py)는 event 전체를 두 arm에 대해 함께 조율한다. 한 arm의 worker cap은 sealed call policy와 같아야 하며, 두 arm 사이 semaphore를 공유하지 않는다.
-- [`phase_runner.py`](twinmarket_kr/rn_ab/phase_runner.py)는 두 arm DB snapshot, durable `commit_decided` checkpoint, journal replay를 사용한다. 둘째 arm의 journal commit 직후 실패하면 DB를 되돌려 journal과 DB를 분리하지 않고, restart가 model call 없이 남은 journal commit을 끝낸다.
-- [`test_rn_ab_runner_concurrency.py`](tests/test_rn_ab_runner_concurrency.py)는 100명/arm의 five-stage mock workflow와 injected failure/retry를 검증한다. 이는 실제 유료 모델 성능 검증이 아니라 scheduler·atomicity·replay 검증이다.
+- [`runner.py`](../../twinmarket_kr/rn_ab/runner.py)는 event 전체를 두 arm에 대해 함께 조율한다. 한 arm의 worker cap은 sealed call policy와 같아야 하며, 두 arm 사이 semaphore를 공유하지 않는다.
+- [`phase_runner.py`](../../twinmarket_kr/rn_ab/phase_runner.py)는 두 arm DB snapshot, durable `commit_decided` checkpoint, journal replay를 사용한다. 둘째 arm의 journal commit 직후 실패하면 DB를 되돌려 journal과 DB를 분리하지 않고, restart가 model call 없이 남은 journal commit을 끝낸다.
+- [`test_rn_ab_runner_concurrency.py`](../../tests/test_rn_ab_runner_concurrency.py)는 100명/arm의 five-stage mock workflow와 injected failure/retry를 검증한다. 이는 실제 유료 모델 성능 검증이 아니라 scheduler·atomicity·replay 검증이다.
 
 ### 2. STB/LTB와 FUSE-inspired memory
 
-- [`stage_adapter.py`](twinmarket_kr/rn_ab/stage_adapter.py)와 [`memory.py`](twinmarket_kr/rn_ab/memory.py)는 STB, analysis, decision, post-fill LTB 각각의 journal logical call과 response digest를 scientific artifact와 같은 SQLite transaction에 기록한다.
+- [`stage_adapter.py`](../../twinmarket_kr/rn_ab/stage_adapter.py)와 [`memory.py`](../../twinmarket_kr/rn_ab/memory.py)는 STB, analysis, decision, post-fill LTB 각각의 journal logical call과 response digest를 scientific artifact와 같은 SQLite transaction에 기록한다.
 - `memory_evidence_edges`에는 STB의 current evidence와 LTB의 parent LTB/current STB/decision/fill/due outcome edge가 기록된다.
 - `assert_complete_lineage()`는 stage별 call-consumption, canonical edge set, outcome 소유자/성숙 시점, current-fill과 later-outcome의 분리를 확인한다. metadata 없이 직접 store API를 부르면 final lineage gate를 통과할 수 없다.
 
 ### 3. 기존 prompt 계승과 RN 계층 계약
 
-- [`PROMPT_LINEAGE.md`](prompts/common/PROMPT_LINEAGE.md)는 공용 프롬프트 묶음이 legacy `update_belief`, `market_analysis`, `make_decision`에서 계승한 판단 원칙과 입력 경계만 바꾼 내용을 표로 고정한다. 뉴스가 실제인지 가짜인지와 community 조건은 prompt가 아니라 입력 묶음·실험 설정에서만 결정한다.
-- legacy root의 10개에서 common 11개로 만들었다. `initial_belief`와 세 news 역할의 4개는 0720 원문과 byte-identical이다. `posting_decision`은 conditional 예시를 유효한 strict JSON으로, `community_reading`은 문자열 post ID와 public-only 읽기 경계만, `community_thinking`은 다음 AM claim JSON 계약만 최소 변경했다. STB·market analysis·decision은 기존 골격을 보존한 계약상 최소 수정이며, post-fill LTB만 새 역할이다. `rn-trusted-system-v2`는 exact source 복사를 quote field에만 요구하고, 다른 interpretation field의 의미·신뢰도 판단은 agent에게 맡긴다.
-- [`belief_contract.py`](twinmarket_kr/rn_ab/belief_contract.py)는 0720 Samsung baseline의 정확한 6D 한도(`dim_1=150`, `dim_2~dim_6=100`)를 단일 원천으로 둔다. StudySpec·stage adapter·persistence가 모두 이 값 이외를 호출 전 거부한다.
+- [`PROMPT_LINEAGE.md`](../../prompts/PROMPT_LINEAGE.md)는 최상위 production 프롬프트 묶음이 legacy `update_belief`, `market_analysis`, `make_decision`에서 계승한 판단 원칙과 입력 경계만 바꾼 내용을 표로 고정한다. 뉴스가 실제인지 가짜인지와 community 조건은 prompt가 아니라 입력 묶음·실험 설정에서만 결정한다.
+- 최상위 `prompts/`에 RN production bundle 11개를 통합했다. `initial_belief`와 세 news 역할의 4개는 0720 원문과 byte-identical이다. `posting_decision`은 conditional 예시를 유효한 strict JSON으로, `community_reading`은 문자열 post ID와 public-only 읽기 경계만, `community_thinking`은 다음 AM claim JSON 계약만 최소 변경했다. STB·market analysis·decision은 기존 골격을 보존한 계약상 최소 수정이며, post-fill LTB만 새 역할이다. `update_belief.txt`는 legacy 호환용으로 남지만 RN bundle hash에는 포함하지 않는다. `rn-trusted-system-v2`는 exact source 복사를 quote field에만 요구하고, 다른 interpretation field의 의미·신뢰도 판단은 agent에게 맡긴다.
+- [`belief_contract.py`](../../twinmarket_kr/rn_ab/belief_contract.py)는 0720 Samsung baseline의 정확한 6D 한도(`dim_1=150`, `dim_2~dim_6=100`)를 단일 원천으로 둔다. StudySpec·stage adapter·persistence가 모두 이 값 이외를 호출 전 거부한다.
 - STB는 current-only이며 이전 Belief·portfolio·fill을 받지 않는다. LTB 모델 출력은 여섯 차원과 `integration_evidence`뿐이다. `view_change`는 사라지는 것이 아니라 post-fill LTB commit 뒤 서버가 이전/새 6D의 before/after SHA-256와 integration evidence를 담은 결정론적 구조체로 만들고, 별도 human-log hash로 LTB·trace에 저장·재구성한다. 이 human field는 STB/LTB/analysis/decision 입력·출력에 재주입되지 않는다.
 - analysis는 previous LTB/current STB/market/execution-state 네 block을 모두 reference해야 하며, `uncertain` stance를 기록할 수 있다. 새 `rn_ab_v9` schema는 empty old DB만 additive upgrade하고 populated old scientific DB는 조용히 relabel하지 않고 새 run DB를 요구한다.
 
 ### 4. 모델과 reasoning-off
 
-- RN 허용 모델은 [`rn_model_pin.py`](twinmarket_kr/rn_model_pin.py)의 `qwen/qwen3.5-flash-02-23` 하나다. `.env`의 `OPENROUTER_MODEL`은 RN model selector가 아니다.
-- [`client.py`](twinmarket_kr/llm/client.py)는 final `extra_body` 직전에 `reasoning.effort="none"`과 `exclude=true`를 강제한다. `exclude`만 있는 요청은 reasoning을 끈 것으로 처리하지 않는다. RN strict call은 `temperature=0.2`, `response_format={"type":"json_object"}`, positive stage token budget도 정확히 요구한다.
-- [`execution.py`](twinmarket_kr/rn_ab/execution.py)는 live model에 arm별 audit path/context를 주고, `validate_run_local_reasoning_audits()`가 요청/반환 모델, provider, response reasoning field, `reasoning_tokens=0`, 정상 `finish_reason`, request shape를 fail-closed로 확인한다.
-- 자세한 사용 계약은 [`API_MODEL_USAGE_NOTICE.md`](API_MODEL_USAGE_NOTICE.md)에 코드 경로와 함께 기록했다.
+- RN 허용 모델은 [`rn_model_pin.py`](../../twinmarket_kr/rn_model_pin.py)의 `qwen/qwen3.5-flash-02-23` 하나다. `.env`의 `OPENROUTER_MODEL`은 RN model selector가 아니다.
+- [`client.py`](../../twinmarket_kr/llm/client.py)는 final `extra_body` 직전에 `reasoning.effort="none"`과 `exclude=true`를 강제한다. `exclude`만 있는 요청은 reasoning을 끈 것으로 처리하지 않는다. RN strict call은 `temperature=0.2`, `response_format={"type":"json_object"}`, positive stage token budget도 정확히 요구한다.
+- [`execution.py`](../../twinmarket_kr/rn_ab/execution.py)는 live model에 arm별 audit path/context를 주고, `validate_run_local_reasoning_audits()`가 요청/반환 모델, provider, response reasoning field, `reasoning_tokens=0`, 정상 `finish_reason`, request shape를 fail-closed로 확인한다.
+- 현재 사용·승인 계약은
+  [`RUNBOOK_AND_PREFLIGHT.md`](../../RUNBOOK_AND_PREFLIGHT.md)를 따른다.
 
 ### 5. 평가 산식과 wealth sensitivity
 
@@ -112,6 +115,6 @@ RQ2는 agent별로 AM+PM signed notional을 먼저 합산하고, **각 agent의 
 
 ## 변경 관리
 
-- source/dependency byte hash는 preflight 때 [`source_hashes.json`](twinmarket_kr/rn_ab/provenance.py)에, common의 11개 prompt byte hash와 역할 구분은 bundle v2 manifest에 자동 봉인된다. STB/analysis/decision/LTB 네 개는 매 event 실행되고, posting/reading/thinking 세 community role은 해당 phase에서 journalled provider가 조건부 실행한다. initial belief와 세 news compatibility prompt는 0720 계승·재현성 검토를 위해 함께 봉인하지만 RN 설계상 별도 모델 호출로 실행하지 않는다. execution factory는 현재 source/dependency tree가 다르면 시작 전 거부한다.
+- source/dependency byte hash는 preflight 때 [`source_hashes.json`](../../twinmarket_kr/rn_ab/provenance.py)에, common의 11개 prompt byte hash와 역할 구분은 bundle v2 manifest에 자동 봉인된다. STB/analysis/decision/LTB 네 개는 매 event 실행되고, posting/reading/thinking 세 community role은 해당 phase에서 journalled provider가 조건부 실행한다. initial belief와 세 news compatibility prompt는 0720 계승·재현성 검토를 위해 함께 봉인하지만 RN 설계상 별도 모델 호출로 실행하지 않는다. execution factory는 현재 source/dependency tree가 다르면 시작 전 거부한다.
 - 모델, provider, reasoning, cohort, calendar, news, initial capital, concurrency를 바꾸면 `.env` 수정이나 legacy resume이 아니라 새 StudySpec/run bundle과 paired run을 만들어야 한다.
 - `outputs/runtime_dbs/*`의 기존 사용자 runtime 파일은 이번 검증에서 수정·삭제하지 않았다.

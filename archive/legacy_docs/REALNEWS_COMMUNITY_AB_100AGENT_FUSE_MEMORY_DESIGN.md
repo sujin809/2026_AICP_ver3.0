@@ -1,5 +1,7 @@
 # 100-agent 실제 뉴스 Community ON/OFF 실험과 FUSE-inspired Short-term→Long-term Belief 설계
 
+> 보존 구분: 과거 상세 설계 provenance. 현재 실행·정책 정본이 아니다.
+
 > 상태: **설계·감사 문서 / 현재 manifest 예시 45거래일×AM·PM=90 decision turns, 최초 3거래일 burn-in·42일 주 분석 / 본 실험 실행 전 NO-GO**  
 > 기준 브랜치: `samsung-baseline-0720`  
 > 기준 commit: `8604f9aec041c9929e327a90cc9025b650e9fab6`  
@@ -8,7 +10,9 @@
 > 원 실험 명세: [ORIGINAL_EXPERIMENT_DESIGN.md](ORIGINAL_EXPERIMENT_DESIGN.md)  
 > 핵심 참고 논문: [Liu et al., *The Stepwise Deception: Simulating the Evolution from True News to Fake News with LLM Agents*, EMNLP 2025](https://aclanthology.org/2025.emnlp-main.1330/); 금융·성찰 관련 비교연구는 §5.5와 부록 C 참조
 > 구현 상태 주석 (2026-07-23): 이 문서 본문은 설계·인수인계 계약이다. RN four-stage core, prompt bundle, schema v9, local adversarial tests는 구현·검증되었으나, 실제 유료 100-agent run은 승인 artifact와 live canary가 없어 계속 NO-GO다. 최신 구현/검증 상태는 [적대적 검증 보고서](RED_TEAM_VALIDATION_REPORT.md)를 기준으로 한다.
-> 연계 문서: [팀 공유 요약](REALNEWS_COMMUNITY_AB_100AGENT_TEAM_BRIEF.md) · [실험 전 체크리스트](PRE_EXPERIMENT_GO_NO_GO_CHECKLIST.md) · [전체 fake-news/인수인계 아키텍처](FULL_EXPERIMENT_ARCHITECTURE_FAKE_NEWS_AND_HANDOFF.md)
+> 현재 정본: [README](../../README.md) ·
+> [실행 전 체크리스트](../../RUNBOOK_AND_PREFLIGHT.md) ·
+> [통합 아키텍처](../../ARCHITECTURE.md)
 
 ---
 
@@ -378,7 +382,7 @@ checkpoint runner의 기본값도 30이지만 명시적으로 100을 받을 수 
 
 따라서 prompt 쪽의 전체 30/55/15 분포가 우연히 같아도 **같은 사람에게 같은 depth가 배정된 것이 아니다**. 일치 행은 40명뿐이다. mismatch가 언제/누가 만들었는지는 현재 artifact만으로 단정하지 않지만, 현재 재생성 코드가 같은 문제를 다시 만들 수 있는 근거는 명확하다.
 
-2026-07-22 사용자 확인에 따라 **Depth 2가 더 적은 현재 DB 분포 30/55/15가 올바른 실험 설정**이다. 이번 study에서는 DB의 agent별 `news_depth`를 canonical assignment로 freeze한다. 실제 runtime은 [`collect_context.py:41-51`](twinmarket_kr/core/collect_context.py)의 `agent["news_depth"]`로 뉴스 접근을 정하고, Depth 2 search 및 community gate도 같은 DB field를 쓴다. 반면 persona prompt는 news interpretation/analysis/decision LLM input에 별도로 주입된다. 따라서 `config.py`의 30% Depth 2 상수와 `persona_validation_report.json`은 새 paper run의 authority가 될 수 없는 stale artifact다.
+2026-07-22 사용자 확인에 따라 **Depth 2가 더 적은 현재 DB 분포 30/55/15가 올바른 실험 설정**이다. 이번 study에서는 DB의 agent별 `news_depth`를 canonical assignment로 freeze한다. 실제 runtime은 [`collect_context.py:41-51`](../../twinmarket_kr/core/collect_context.py)의 `agent["news_depth"]`로 뉴스 접근을 정하고, Depth 2 search 및 community gate도 같은 DB field를 쓴다. 반면 persona prompt는 news interpretation/analysis/decision LLM input에 별도로 주입된다. 따라서 `config.py`의 30% Depth 2 상수와 `persona_validation_report.json`은 새 paper run의 authority가 될 수 없는 stale artifact다.
 
 이 상태에서는 런타임이 DB depth에 따라 뉴스·community 권한을 주면서 모델은 persona prompt에서 다른 접근 성향을 읽는다. Community treatment eligibility 자체가 오염되므로 본 실행을 금지한다.
 

@@ -1,5 +1,7 @@
 # 커뮤니티 세팅 검토 보고서
 
+> 보존 구분: 과거 코드 감사 결과. 현재 실행·정책 정본이 아니다.
+
 > 대상: `2026_AICP_ver2.0-sujin` / RealNews Community A/B (2-arm) 실험
 > 검토일: 2026-07-29 · 방법: 정적 코드 대조 + 로컬 테스트 실행 (외부 API 호출 없음)
 > 검토 범위: ① 에이전트의 게시 판단·내용 ② depth별 커뮤니티 노출 규칙 구현 ③ 커뮤니티 상호작용 파이프라인
@@ -15,7 +17,7 @@
 | 코드 | `twinmarket_kr/community/*` (673줄) | `twinmarket_kr/rn_ab/community*.py` (약 7,600줄) |
 | 진입점 | `scripts/05_run_simulation.py`, `06_..._smoke_test.py` | `scripts/09_..._preflight` → `scripts/12_..._operate` |
 | 제어 | `config.py`의 `ENABLE_COMMUNITY*` 플래그 3개 | 봉인된 `study_spec.community_policy` |
-| 프롬프트 | `prompts/*.txt` | `prompts/common/*.txt` |
+| 프롬프트 | `prompts/*.txt` | `prompts/*.txt` (통합 production 정본, 런타임은 run-local 봉인 사본) |
 
 **RN 경로는 레거시 커뮤니티 모듈을 단 한 줄도 import하지 않는다.** 따라서 아래 항목은 논문 실행과 무관한 죽은 코드다.
 
@@ -57,7 +59,7 @@
 
 ### 1.2 게시 판단에 실제로 들어가는 입력
 
-프롬프트: `prompts/common/posting_decision.txt` (런타임은 run-local 봉인 사본)
+프롬프트: `prompts/posting_decision.txt` (런타임은 run-local 봉인 사본)
 허용 슬롯 6개 고정: `prompt_registry.py:144-151`
 
 | 슬롯 | 실제 채워지는 값 | 위치 |
@@ -73,7 +75,7 @@
 
 ### 1.3 프롬프트가 요구하는 판단 절차
 
-`prompts/common/posting_decision.txt`는 3단계로 유도한다.
+`prompts/posting_decision.txt`는 3단계로 유도한다.
 
 1. **오늘 올리고 싶은가** — "매일 올릴 필요는 전혀 없습니다. 자연스럽게 올리고 싶은 날에만 올리세요."
 2. **어떤 유형인가** — 6종 중 선택. "분석적이고 정보성 글만이 좋은 글이 아닙니다. 수익 자랑, 손실 하소연, 궁금한 점 질문, 잡담, 공감 구하기 — 이 모든 것이 실제 커뮤니티에 존재합니다."
@@ -295,7 +297,7 @@ D1/D2 리더는 다음 AM 해석에서 **자기 글을 제외한 그날 게시�
 
 모든 작성자의 public profile이 동일 상수다: `{badges:["registered-community-member"], direction:"neutral", reliability:50}` (`preflight_inputs.py:52-58`, 정책명 `uniform-neutral-no-private-runtime-state-v1`). 다르면 preflight가 실패한다(`:525-526`).
 
-그런데 `prompts/common/community_reading.txt:29`는 선택 기준으로 **"작성자의 배지나 평판이 내 판단에 참고될 수 있는 글"**을 그대로 안내한다. 존재하지 않는 신호를 참조하는 프롬프트 문구이며, 매 호출마다 정보량 0인 토큰을 싣는다.
+그런데 `prompts/community_reading.txt:29`는 선택 기준으로 **"작성자의 배지나 평판이 내 판단에 참고될 수 있는 글"**을 그대로 안내한다. 존재하지 않는 신호를 참조하는 프롬프트 문구이며, 매 호출마다 정보량 0인 토큰을 싣는다.
 
 **⑤ select 단계에는 인기 신호가 전혀 없다**
 
@@ -438,5 +440,5 @@ D1/D2는 `title_only` 채널로 그날 자기 글 제외 **모든 글의 제목*
 | 정책 파싱 | `rn_ab/spec.py:982-1013` |
 | public profile 생성 | `rn_ab/preflight_inputs.py:377-395` |
 | 프롬프트 슬롯 정의 | `rn_ab/prompt_registry.py:144-165` |
-| 프롬프트 원본 | `prompts/common/posting_decision.txt`, `community_reading.txt`, `community_thinking.txt` |
+| 프롬프트 원본 | `prompts/posting_decision.txt`, `prompts/community_reading.txt`, `prompts/community_thinking.txt` |
 | 스키마 | `db/schema.py:395-408`(exposures), `:448-492`(post_trace) |

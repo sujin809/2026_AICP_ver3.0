@@ -4,7 +4,16 @@
 files. It is deliberately not a run input directory and cannot substitute for
 a sealed StudySpec or RunBundle.
 
-Build and verify it locally:
+This directory is now retained as a historical archive of that source audit.
+The runtime real-news source of truth is
+`preparation/rn_ab_sealed_v1/news.json`, pinned by
+`preparation/rn_ab_sealed_v1/study_spec.json`. Do not refresh this archived
+audit's hashes merely because current source files have changed.
+
+The commands below are preserved to document how the historical audit was
+created. `validate` intentionally compares its recorded source hashes with the
+current source files and may now fail after an approved source refresh. Do not
+rewrite the archived audit to make that check pass.
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. python3.12 \

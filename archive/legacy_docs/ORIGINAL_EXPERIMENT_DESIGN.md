@@ -1,5 +1,7 @@
 # 삼성전자 LLM 개인투자자 정보환경 실험: 본래 설계 명세
 
+> 보존 구분: 최초 연구설계 provenance. 현재 실행·정책 정본이 아니다.
+
 ## 0. 문서 목적과 기준
 
 이 문서는 논문을 위해 처음 정의한 **3개월·6조건 실험의 연구 목적, 처치, 에이전트, 뉴스, 커뮤니티, 거래, 로그, 검증 및 분석 규칙**을 한곳에 고정한다.
@@ -17,10 +19,10 @@
 - [0720 코드 인수인계](EXPERIMENT_0720_HANDOFF.md)
 - [0720 실행 절차](EXPERIMENT_0720_RUNBOOK.md)
 - [연구 계획](twinmarket_micro_behavior_research_plan.md)
-- [가짜뉴스 DB 안내](Event_Fake_News_DB_Guide.md)
-- [belief deviation rubric](analysis/belief_event_study/belief_deviation_rubric.md)
-- [total deviation 정의](analysis/belief_event_study/total_deviation_spec.md)
-- [embedding 분석 계획](analysis/belief_event_study/embedding_analysis_plan.md)
+- [현재 실험 설계](../../EXPERIMENT_DESIGN.md)
+- [belief deviation rubric](../../analysis/belief_event_study/belief_deviation_rubric.md)
+- [total deviation 정의](../../analysis/belief_event_study/total_deviation_spec.md)
+- [embedding 분석 계획](../../analysis/belief_event_study/embedding_analysis_plan.md)
 
 ---
 
@@ -175,7 +177,7 @@
 | 본래 100명 모집단 | 90 | 10 |
 | 현재 30명 실행 cohort | 30 | 0 |
 
-따라서 기존 완료 로그로 초기자본 1억 대 10억 취약성을 비교할 수 없다. 자세한 증거는 [현금·초기자본 진단 보고서](analysis/cash_wealth_diagnostic/report.html)에 있다.
+따라서 기존 완료 로그로 초기자본 1억 대 10억 취약성을 비교할 수 없다. 자세한 증거는 [현금·초기자본 진단 보고서](../../analysis/cash_wealth_diagnostic/report.html)에 있다.
 
 ### 5.4 현재 30명 cohort의 실제 구성
 

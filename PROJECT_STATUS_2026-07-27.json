@@ -120,7 +120,7 @@
         }
       ],
       "documentation": [
-        "NEWS_RECRAWL_PLAN.md (§5-3)",
+        "archive/legacy_docs/NEWS_RECRAWL_PLAN.md (§5-3)",
         "News_Scraper/FILTERING_CRITERIA.md"
       ]
     },
@@ -388,9 +388,9 @@
     "crawl_directory": "outputs/crawl/",
     "scripts_directory": "News_Scraper/",
     "documents": [
-      "NEWS_RECRAWL_PLAN.md",
+      "archive/legacy_docs/NEWS_RECRAWL_PLAN.md",
       "News_Scraper/FILTERING_CRITERIA.md",
-      "PROJECT_STATUS_2026-07-27.md",
+      "archive/legacy_docs/PROJECT_STATUS_2026-07-27.md",
       "PROJECT_STATUS_2026-07-27.json"
     ]
   },

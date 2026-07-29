@@ -1,4 +1,4 @@
-<title>RN Community A/B — 실행 파이프라인 스키마</title>
+<title>역사 자료 — RN Community A/B 실행 파이프라인 스키마</title>
 
 <style>
   :root {
@@ -460,7 +460,7 @@
           <span class="step-idx">P3</span>
           <div class="step-body">
             <span class="step-name">selective_reads() <span class="tag tag-llm">LLM ×2</span></span>
-            <span class="step-desc">select — 자기 글을 제외한 후보에서 D1은 최대 5개, D2는 최대 10개를 고른다. react — 고른 글의 본문 전체를 읽고 like / unlike / none.</span>
+            <span class="step-desc">select — 자기 글을 제외한 후보에서 D1과 D2 모두 최대 5개를 고른다. react — 고른 글의 본문 전체를 읽고 like / unlike / none.</span>
             <span class="step-meta">후보 보드는 이 단계 시작 전에 동결 → 같은 PM 안에서 남의 반응을 볼 수 없다</span>
           </div>
         </div>
@@ -760,7 +760,7 @@
         <span class="card-body">
           선택 기준으로 안내하고 있지만 실제 프로필은 전원 동일합니다. 문구를 두든 빼든 결정이 필요합니다.
         </span>
-        <span class="card-path">prompts/common/community_reading.txt:29</span>
+        <span class="card-path">prompts/community_reading.txt:29</span>
       </div>
       <div class="card">
         <span class="card-tag">확인</span>
@@ -777,7 +777,7 @@
   <footer>
     검토일 2026-07-29 · 정적 코드 대조 + 로컬 테스트 (외부 API 호출 없음)<br>
     커뮤니티 테스트 53건 통과 · rn_ab 전체 283건 중 1건 실패(뉴스 입력 해시, 커뮤니티 무관)<br>
-    상세 근거는 COMMUNITY_SETTING_REVIEW.md
+    과거 상세 근거는 archive/legacy_docs/COMMUNITY_SETTING_REVIEW.md
   </footer>
 
 </div>

@@ -1,5 +1,7 @@
 # Paper Note: From Heard to Lived Opinions
 
+> 보존 구분: 연구 참고 노트. 현재 실행·정책 정본이 아니다.
+
 - **Title**: From Heard to Lived Opinions: Simulating Opinion Dynamics with Grounded LLM Agents in Economic Environments
 - **Authors**: Ryuji Hashimoto, Masahiro Kaneko, Ryosuke Takata, Takehiro Takayanagi, Kiyoshi Izumi (Simulacra Inc. / 도쿄대 / MBZUAI)
 - **Venue / status**: arXiv:2603.26701 (2026-03) → ACL 2026 Findings
