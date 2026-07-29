@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import bisect
 import csv
+import hashlib
+import json
 import pickle
 import random
 import re
@@ -13,10 +16,30 @@ from typing import Any, Iterable
 import config
 
 
+# LEGACY: 아래 세 키워드 묶음과 _normalize_category()/_importance()는 원천 pkl을
+# CSV로 전처리하던 구 경로(prepare_news)에서만 쓴다. 현재 JSON split 경로는 기사
+# 내용이 아니라 수집 폴더(FOLDER_SECTOR)로 버킷을 정하므로 이 값들을 참조하지 않는다.
+# 후속 가짜뉴스 주입 실험이 CSV 경로를 다시 쓸 수 있어 삭제하지 않고 보존한다.
 STOCK_KEYWORDS = ("삼성전자", "005930", "갤럭시", "DS부문", "파운드리", "HBM", "메모리", "반도체")
 SECTOR_KEYWORDS = ("반도체", "HBM", "메모리", "파운드리", "AI 반도체", "2나노", "장비", "낸드", "DRAM")
 ECONOMY_KEYWORDS = ("금리", "환율", "수출", "물가", "경기", "정책", "원달러", "외국인", "코스피", "미국")
+# 버킷별 쿼터 (턴당): 삼성전자(종목) 5, 반도체(섹터) 3, 거시경제(경제) 2
 CATEGORY_TARGETS = {"종목": 5, "섹터": 3, "경제": 2}
+# 시드는 config.RANDOM_SEED 하나에서만 온다. 뉴스 선정용 별도 시드를 두면 논문에
+# "seed=N"이라고 적어도 실제 기사 추첨은 다른 값이었던 상태가 되어 재현이 깨진다.
+DEFAULT_SEED = config.RANDOM_SEED
+# 뉴스 노출 윈도우 경계 (양끝 포함 비교와 짝을 이룸).
+#   AM 판단: 전 거래일 15:30 ~ 당일 08:59
+#   PM 판단: 당일 09:00 ~ 당일 15:29
+# 15:29 기사는 당일 PM에, 15:30 기사는 다음 거래일 AM에 들어가므로 겹침도 공백도 없다.
+# 이 값은 뉴스 가시성 경계이며, 체결·주문 마감 시각(config.MARKET_CLOSE_TIME=15:30)과는
+# 의미가 다르므로 별도 상수로 둔다.
+MARKET_OPEN_TIME = "09:00"
+AM_NEWS_WINDOW_START_TIME = "15:30"  # 전 거래일, 포함
+AM_NEWS_WINDOW_END_TIME = "08:59"  # 당일, 포함
+PM_NEWS_WINDOW_START_TIME = "09:00"  # 당일, 포함
+PM_NEWS_WINDOW_END_TIME = "15:29"  # 당일, 포함
+AM_WINDOW_START_TIME = AM_NEWS_WINDOW_START_TIME  # 하위 호환 alias
 DEFAULT_DEPTH2_FIELDS = (
     {"field": "HBM", "keywords": ["HBM", "메모리", "고대역폭"]},
     {"field": "파운드리", "keywords": ["파운드리", "2나노", "수주"]},
@@ -69,7 +92,25 @@ def _public_search_item(row: dict[str, Any], score: float) -> dict[str, Any]:
     }
 
 
+def stable_news_seed(base_seed: int, *parts: object) -> int:
+    """불변 식별자에서 선정 시드를 파생한다.
+
+    서수(day_index)에서 파생하면 기간의 앞부분을 하루만 늘리거나 줄여도 겹치는
+    날짜의 시드가 전부 밀려 같은 이벤트의 기사 선정이 바뀐다. 날짜·subturn 같은
+    불변 ID로 해싱하면 기간을 조정해도 겹치는 이벤트의 선정이 보존된다.
+    """
+    payload = "|".join([str(base_seed), *(str(part) for part in parts)])
+    return int.from_bytes(hashlib.sha256(payload.encode("utf-8")).digest()[:4], "big") & 0x7FFFFFFF
+
+
 def _select_daily(rows: list[dict[str, Any]], *, seed: int | None = None) -> list[dict[str, Any]]:
+    """버킷별 쿼터만큼 균등 무작위로 뽑는다.
+
+    가용량이 쿼터보다 적으면 **그만큼만** 노출하고 다른 버킷 기사로 메우지 않는다
+    (NEWS_RECRAWL_PLAN §5-2 확정). 보충을 하면 부족한 버킷의 자리를 풍부한 버킷이
+    차지해 버킷 구성비가 조용히 왜곡되기 때문이다. 그 대신 턴별 노출량이 변동하므로
+    실제 노출 분포를 결과와 함께 보고해야 한다.
+    """
     rng = random.Random(seed)
     selected: list[dict[str, Any]] = []
     used_ids: set[str] = set()
@@ -78,9 +119,6 @@ def _select_daily(rows: list[dict[str, Any]], *, seed: int | None = None) -> lis
         picks = rng.sample(pool, min(target, len(pool)))
         selected.extend(picks)
         used_ids.update(row["id"] for row in picks)
-    if len(selected) < sum(CATEGORY_TARGETS.values()):
-        remains = [row for row in rows if row["id"] not in used_ids]
-        selected.extend(rng.sample(remains, min(sum(CATEGORY_TARGETS.values()) - len(selected), len(remains))))
     return selected
 
 
@@ -104,44 +142,75 @@ def _select_pre_close_cutoff_daily(
 ) -> list[dict[str, Any]]:
     trading_dates = _trading_dates_from_db(sim_db_path)
     if len(trading_dates) < 2:
-        return _select_by_calendar_day(processed, daily_seed=daily_seed)
+        # 달력일 단위 폴백은 AM/PM 구분을 없애 노출 구조를 통째로 바꾼다.
+        # 조용히 넘어가면 다른 실험이 된 줄 모르고 진행되므로 여기서 멈춘다.
+        raise RuntimeError(
+            f"거래일 캘린더를 읽을 수 없어 AM/PM 뉴스 윈도우를 만들 수 없다: {sim_db_path} "
+            f"(조회된 거래일 {len(trading_dates)}개). "
+            "달력일 단위 선정이 정말 필요하면 _select_by_calendar_day()를 명시적으로 호출한다."
+        )
     previous_by_date = {
         day: trading_dates[index - 1]
         for index, day in enumerate(trading_dates)
         if index > 0
     }
+    # Precompute each row's datetime once and sort, so every AM/PM window below
+    # is a bisect range lookup instead of a full O(n) rescan of `processed`.
+    dated_rows = sorted(
+        (
+            (row_dt, row)
+            for row in processed
+            if (row_dt := _combine_datetime(str(row.get("date", "")), str(row.get("time", "")))) is not None
+        ),
+        key=lambda item: item[0],
+    )
+    row_datetimes = [item[0] for item in dated_rows]
+
+    def _window_candidates(start_dt: datetime, end_dt: datetime) -> list[dict[str, Any]]:
+        lo = bisect.bisect_left(row_datetimes, start_dt)
+        hi = bisect.bisect_right(row_datetimes, end_dt)
+        return [row for _, row in dated_rows[lo:hi]]
+
     selected: list[dict[str, Any]] = []
-    for day_index, day in enumerate(trading_dates[1:]):
+    for day in trading_dates[1:]:
         previous_day = previous_by_date[day]
         windows = [
-            ("am", previous_day, config.MARKET_CLOSE_TIME, day, "08:59"),
-            ("pm", day, "08:59", day, config.MARKET_CLOSE_TIME),
+            (
+                "am",
+                previous_day,
+                AM_NEWS_WINDOW_START_TIME,
+                day,
+                AM_NEWS_WINDOW_END_TIME,
+            ),
+            (
+                "pm",
+                day,
+                PM_NEWS_WINDOW_START_TIME,
+                day,
+                PM_NEWS_WINDOW_END_TIME,
+            ),
         ]
-        for slot_index, (slot, start_date, start_time, end_date, end_time) in enumerate(windows):
-            candidates = [
-                row
-                for row in processed
-                if _in_datetime_window(
-                    row,
-                    start_date=start_date,
-                    start_time=start_time,
-                    end_date=end_date,
-                    end_time=end_time,
-                )
-            ]
-            seed = None if daily_seed is None else daily_seed + day_index * 2 + slot_index
+        for slot, start_date, start_time, end_date, end_time in windows:
+            start_dt = _combine_datetime(start_date, start_time)
+            end_dt = _combine_datetime(end_date, end_time)
+            candidates = _window_candidates(start_dt, end_dt) if start_dt and end_dt else []
+            # 서수가 아니라 (거래일, subturn)에서 파생한다. §4.11 P1 참조.
+            seed = None if daily_seed is None else stable_news_seed(daily_seed, day, slot)
             selected.extend(_select_daily(candidates, seed=seed))
     selected.sort(key=lambda row: (row["date"], row["time"], row["id"]))
     return selected
 
 
 def _select_by_calendar_day(processed: list[dict[str, Any]], *, daily_seed: int | None = None) -> list[dict[str, Any]]:
+    """LEGACY: 거래일 캘린더 없이 달력일 단위로 선정한다. AM/PM 구분이 없으므로
+    본 실험 경로에서는 쓰지 않고, 호출하려면 명시적으로 불러야 한다.
+    """
     selected: list[dict[str, Any]] = []
     by_day: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in processed:
         by_day[row["date"]].append(row)
-    for day_index, (_, rows) in enumerate(sorted(by_day.items())):
-        seed = None if daily_seed is None else daily_seed + day_index
+    for day, rows in sorted(by_day.items()):
+        seed = None if daily_seed is None else stable_news_seed(daily_seed, day)
         selected.extend(_select_daily(rows, seed=seed))
     return selected
 
@@ -186,6 +255,10 @@ def _in_datetime_window(
 
 
 def _normalize_category(raw: str | None, title: str, summary: str) -> str:
+    """LEGACY: 구 CSV 전처리(prepare_news) 전용 키워드 버킷 판정.
+
+    JSON split 경로는 FOLDER_SECTOR로 버킷을 정하므로 이 함수를 쓰지 않는다.
+    """
     text = f"{raw or ''} {title} {summary}"
     if raw in {"종목", "stock"}:
         return "종목"
@@ -223,6 +296,7 @@ def _is_excluded_title(title: str) -> bool:
 
 
 def _importance(title: str, summary: str, category: str, time_text: str) -> float:
+    """LEGACY: 구 중요도 점수. 현재 선정은 seed 고정 균등 무작위이며 미사용."""
     text = f"{title} {summary}"
     score = 0.0
     score += sum(text.count(keyword) for keyword in STOCK_KEYWORDS) * 3
@@ -251,6 +325,115 @@ def _raw_records(raw: Any) -> list[dict[str, Any]]:
     if hasattr(raw, "to_dict") and hasattr(raw, "columns"):
         return [dict(item) for item in raw.to_dict("records")]
     raise TypeError(f"unsupported raw news format: {type(raw)!r}")
+
+
+# 소스 폴더 -> 뉴스 섹터. 버킷은 기사 내용 키워드가 아니라 "어디서 수집했는가"로
+# 정한다. macro_* 세 폴더는 모두 하나의 거시경제 섹터다.
+# Depth 2 추가 탐색 상한. 프롬프트 문구·LLM 출력 검증기·검색 호출·컨텍스트 한도가
+# 모두 이 두 값을 공유한다. 0은 "이번 턴에는 검색하지 않는다"는 유효한 선택이다.
+DEPTH2_MAX_KEYWORDS = 5
+DEPTH2_MAX_SEARCH_ARTICLES = 5
+
+FOLDER_SECTOR = {
+    "samsung_split": "종목",
+    "semiconductor_split": "섹터",
+    "macro_economic-policy_split": "경제",
+    "macro_business-index_split": "경제",
+    "macro_trade_split": "경제",
+}
+
+# 같은 기사가 여러 폴더에서 수집됐을 때 대표 섹터를 정하는 우선순위.
+# 하위(더 구체적인) 섹터가 이긴다: 삼성전자 > 반도체 > 거시경제.
+SECTOR_PRIORITY = {"종목": 0, "섹터": 1, "경제": 2}
+
+# "필터링 여부"의 노출 대상 값. 2026-07-29 재판정으로 다섯 폴더가 모두
+# N=유지 / Y=제외 로 통일됐다. 이전에는 samsung_split만 N(=정상 기사)이고
+# 나머지는 Y(=관련성 있음)라 극성이 갈렸는데, 그 상태로 실행하면 유지할 기사를
+# 버리고 버릴 기사를 노출하게 된다.
+FOLDER_KEEP_VALUE = {
+    "samsung_split": "N",
+    "macro_economic-policy_split": "N",
+    "macro_trade_split": "N",
+    "semiconductor_split": "N",
+    "macro_business-index_split": "N",
+}
+
+
+def load_news_from_json_splits(
+    splits_dir: Path | str = "outputs",
+    *,
+    daily_seed: int | None = None,
+    sim_db_path: Path | str = config.SIM_DB,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """JSON split 폴더에서 뉴스 데이터를 로드한다.
+
+    버킷은 기사 내용이 아니라 수집 폴더로 정한다. 같은 기사가 여러 폴더에서
+    수집됐으면 ``SECTOR_PRIORITY``에 따라 더 구체적인 섹터가 대표가 된다
+    (삼성전자 > 반도체 > 거시경제).
+    """
+    splits_path = Path(splits_dir)
+
+    # (제목, 날짜) -> 대표 기사. 같은 키가 다시 나오면 우선순위가 높은 섹터로 교체한다.
+    by_key: dict[tuple[str, str], dict[str, Any]] = {}
+
+    for folder, keep_value in FOLDER_KEEP_VALUE.items():
+        folder_path = splits_path / folder
+        if not folder_path.exists():
+            continue
+        sector = FOLDER_SECTOR[folder]
+
+        for json_file in sorted(folder_path.glob("*.json"), key=lambda x: int(x.stem)):
+            # 손상된 split 파일을 조용히 건너뛰면 노출 뉴스가 말없이 줄어든다.
+            with json_file.open(encoding="utf-8") as handle:
+                articles = json.load(handle)
+
+            for idx, article in enumerate(articles):
+                if not isinstance(article, dict):
+                    continue
+
+                title = str(article.get("제목", "")).strip()
+                summary = str(article.get("요약", "")).strip()
+                written = str(article.get("작성시각", ""))
+                date_text = written[:10]
+                time_text = written[11:16] if len(written) > 10 else "00:00"
+
+                if not title or not summary or len(date_text) != 10:
+                    continue
+                if str(article.get("필터링 여부", "N")) != keep_value:
+                    continue
+
+                key = (title, date_text)
+                incumbent = by_key.get(key)
+                if incumbent is not None and (
+                    SECTOR_PRIORITY[incumbent["category"]] <= SECTOR_PRIORITY[sector]
+                ):
+                    continue
+
+                by_key[key] = {
+                    "id": f"{folder}_{json_file.stem}_{idx}",
+                    "title": title,
+                    "summary": summary,
+                    "date": date_text,
+                    "time": time_text,
+                    "category": sector,
+                    "is_fake": False,
+                }
+
+    all_articles = sorted(by_key.values(), key=lambda x: (x["date"], x["time"], x["id"]))
+
+    # 2026-02-27부터 필터링
+    start_date = "2026-02-27"
+    articles_from_start = [a for a in all_articles if a['date'] >= start_date]
+
+    # 실거래일 기준 AM/PM 창(전거래일 마감 이후~당일 개장 전 / 당일 개장~마감) 단위로
+    # 턴당 쿼터(CATEGORY_TARGETS)를 적용해 선택한다. sim.db가 없으면 달력일 단위로 폴백.
+    selected = _select_pre_close_cutoff_daily(
+        articles_from_start,
+        daily_seed=daily_seed or DEFAULT_SEED,
+        sim_db_path=sim_db_path,
+    )
+
+    return articles_from_start, selected
 
 
 def prepare_news(
@@ -337,16 +520,43 @@ def prepare_news(
 class NewsAgent:
     def __init__(
         self,
-        processed_csv_path: Path | str = config.PROCESSED_NEWS_CSV,
-        daily_csv_path: Path | str = config.DAILY_NEWS_SELECTION_CSV,
+        processed_csv_path: Path | str | None = None,
+        daily_csv_path: Path | str | None = None,
         *,
         include_fake_news: bool = False,
+        use_json_splits: bool | None = None,
+        splits_dir: Path | str = "outputs",
+        daily_seed: int | None = None,
     ) -> None:
-        self.processed_csv_path = Path(processed_csv_path)
-        self.daily_csv_path = Path(daily_csv_path)
+        # 명시적으로 건네진 CSV 경로는 절대 조용히 무시하지 않는다. 가짜뉴스 주입
+        # 실험처럼 런타임 뉴스를 교체하는 경로가 여기에 의존한다.
+        explicit_csv = processed_csv_path is not None or daily_csv_path is not None
+        self.processed_csv_path = Path(processed_csv_path or config.PROCESSED_NEWS_CSV)
+        self.daily_csv_path = Path(daily_csv_path or config.DAILY_NEWS_SELECTION_CSV)
         self.include_fake_news = include_fake_news
-        self._processed = self._filter_fake_rows(self._load_csv(self.processed_csv_path))
-        self._daily = self._filter_fake_rows(self._load_csv(self.daily_csv_path))
+
+        if use_json_splits is None:
+            use_json_splits = not explicit_csv
+        elif use_json_splits and explicit_csv:
+            raise ValueError(
+                "use_json_splits=True와 명시적 CSV 경로를 함께 줄 수 없다. "
+                "둘 중 어떤 뉴스 입력을 쓸지 호출부에서 정해야 한다."
+            )
+
+        # split 로드 실패는 노출 뉴스를 말없이 바꾸므로 CSV로 폴백하지 않고 실패한다.
+        if use_json_splits:
+            self._processed, self._daily = load_news_from_json_splits(
+                splits_dir,
+                daily_seed=DEFAULT_SEED if daily_seed is None else daily_seed,
+            )
+        else:
+            self._processed = self._filter_fake_rows(self._load_csv(self.processed_csv_path))
+            self._daily = self._filter_fake_rows(self._load_csv(self.daily_csv_path))
+        self.news_source = "json_splits" if use_json_splits else "csv"
+
+        self._processed = self._filter_fake_rows(self._processed)
+        self._daily = self._filter_fake_rows(self._daily)
+
         self._by_id = {row["id"]: row for row in self._processed}
         self._by_title_all: dict[str, list[dict[str, str]]] = defaultdict(list)
         for row in self._processed:
@@ -385,6 +595,7 @@ class NewsAgent:
                 start_time=start_time,
                 end_date=end_date,
                 end_time=end_time,
+                include_start=True,
             )
         ]
         return [
@@ -465,7 +676,7 @@ class NewsAgent:
         window_end_date: str | None = None,
         window_end_time: str | None = None,
         lookback_days: int = 7,
-        top_n: int = 10,
+        top_n: int = DEPTH2_MAX_SEARCH_ARTICLES,
     ) -> list[dict[str, Any]]:
         normalized_keywords = [str(keyword).strip() for keyword in keywords if str(keyword).strip()]
         if not normalized_keywords:
@@ -505,7 +716,7 @@ class NewsAgent:
             "limits": {
                 "daily_read_max": daily_read_max,
                 "search_fields_max": 0,
-                "search_read_max": 10 if news_depth >= 2 else 0,
+                "search_read_max": DEPTH2_MAX_SEARCH_ARTICLES if news_depth >= 2 else 0,
                 "lookback_days": 7 if news_depth >= 2 else 0,
             },
         }
@@ -541,7 +752,7 @@ class NewsAgent:
             "limits": {
                 "daily_read_max": daily_read_max,
                 "search_fields_max": 0,
-                "search_read_max": 10 if news_depth >= 2 else 0,
+                "search_read_max": DEPTH2_MAX_SEARCH_ARTICLES if news_depth >= 2 else 0,
                 "lookback_days": 0,
             },
         }

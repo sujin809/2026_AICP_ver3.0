@@ -108,16 +108,21 @@ class RNPromptRegistryTests(unittest.TestCase):
                 "update_long_term_belief.txt",
             },
         )
-        # Four support roles retain the 0720 bytes. community_thinking changes
+        # Three support roles retain the 0720 bytes. community_thinking changes
         # the output contract to the exact next-AM claim schema, while
         # community_reading changes only its public-profile privacy boundary
         # plus the required active select/react JSON contract, and
         # posting_decision makes both conditional JSON examples strict and
         # parseable.
+        #
+        # news_agent_pre_search left the byte-identical set on 2026-07-28: the
+        # approved D2 design changed from a server-computed recent-news registry
+        # to agent-chosen keyword search, so this prompt became an executed RN
+        # role. Its keyword cap is now 0-5 and matches
+        # ``news_agent.DEPTH2_MAX_KEYWORDS``; zero means "no search this turn".
         for filename in (
             "initial_belief.txt",
             "news_agent_post_search.txt",
-            "news_agent_pre_search.txt",
             "news_interpretation.txt",
         ):
             with self.subTest(filename=filename):

@@ -40,19 +40,32 @@ EXPERIMENT_BASE_DB = OUTPUT_DIR / "experiment_base_sim.db"
 
 STOCK_CODE = "005930"
 COUNTERSIDE_USER_ID = "COUNTERSIDE"
-# Legacy/exploratory default only.  RN Community AB never imports this value:
-# its sealed TradePolicy fails closed unless commission, sell tax, and every
-# persisted fill fee are exactly 0.0.
-COMMISSION_RATE = 0.0005
+
+# ----- 미사용(dead) 상수 -----
+# 아래 네 값은 실행 경로 어디에서도 읽지 않는다. 여기 숫자를 바꿔도 실험은
+# 바뀌지 않으므로(FUSE_MEMORY_DESIGN P1의 "false control"), 실제 값이 어디서
+# 오는지 함께 적어 둔다. 지우지 않는 이유는 설계 문서가 이 이름들을 참조하기
+# 때문이다.
+#
+# COMMISSION_RATE: 실제 수수료 0은 stages.py 의 계약 검증이 fail-closed 로
+#   강제한다(0이 아니면 StageContractError). 설계 문서 M-23 처방대로 config 도
+#   0.0 으로 맞춰 두어 config 와 런타임이 다른 정책을 주장하지 않게 한다.
+# N_WARMUP: RN burn-in(3거래일)은 봉인된 registry/study_spec 에서 온다.
+# N_TRANSITION, CIRCUIT_BREAKER: 현재 어느 경로에서도 쓰지 않는다.
+COMMISSION_RATE = 0.0
 CIRCUIT_BREAKER = 0.30
 N_WARMUP = 3
 N_TRANSITION = 4
+
 INI_CASH_SMALL = 100_000_000
 INI_CASH_LARGE = 1_000_000_000
 MIN_ORDER_UNIT = 1
 RANDOM_SEED = 2
-NEWS_DEPTH2_RATIO = 0.30
-NEWS_DEPTH0_COUNT = 15
+# 100명 기준 depth 분포는 D2 15 / D1 55 / D0 30 이다.
+# 봉인된 persona_snapshot(preparation/rn_ab_persona_snapshot_v1/)과 sys_100.db가
+# 이미 이 분포이므로, 재생성 경로도 같은 값을 내도록 맞춘다.
+NEWS_DEPTH2_RATIO = 0.15
+NEWS_DEPTH0_COUNT = 30
 MAX_SINGLE_TRADE_CASH_RATIO = 0.50
 MARKET_CLOSE_TIME = "15:30"
 ORDER_CUTOFF_TIME = "15:30"
@@ -66,6 +79,8 @@ BELIEF_LIMITS = {
     "dim_6": 100,
 }
 
+# 미사용(dead). 실험 구간은 CLI 인자(--start-date/--end-date) 또는 RN 봉인
+# calendar registry 에서 결정된다. 여기에 날짜를 적어도 반영되지 않는다.
 EXPERIMENT_START_DATE = ""
 EXPERIMENT_END_DATE = ""
 

@@ -123,7 +123,12 @@ class RNRunContextEvidenceProvider:
             ]
             depth2_search_results = ()
             if persona.news_depth == 2 and self.context.generated_inputs is not None:
-                depth2_search_results = self.context.generated_inputs.depth2_search_results(
+                # INTERIM (pre-canary): deterministic most-recent selection from the
+                # sealed candidate pool.  Agent keyword search needs a paid call, and
+                # this module is contractually call-free (local_only / paid_api_calls
+                # = 0), so that selection must move to a scheduler phase before it can
+                # replace this line.
+                depth2_search_results = self.context.generated_inputs.depth2_select_recent(
                     event_id=event_id,
                     news=self.context.news_registry,
                 )

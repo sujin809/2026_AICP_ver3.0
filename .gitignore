@@ -17,3 +17,9 @@ outputs/experiment_base_sim.db
 outputs/experiment_base_sim.report.json
 outputs/.openrouter_slots/
 outputs/logs/paper_*/
+outputs/crawl/
+# split 재생성 전 스냅샷. 재현은 crawl -> build_splits 로 하므로 저장소에 두지 않는다.
+outputs/backup_splits_*/
+# 서브에이전트 판정/요약 작업 배치. 결과는 split JSON 에 이미 반영되어 있다.
+outputs/worklots/
+outputs/worklots_recheck/

@@ -15,7 +15,13 @@ import config
 from twinmarket_kr.agents.exchange_agent import ExchangeAgent
 from twinmarket_kr.agents.fundamental_agent import FundamentalAgent
 from twinmarket_kr.agents.memory_agent import MemoryAgent, load_agents_from_sys100
-from twinmarket_kr.agents.news_agent import NewsAgent
+from twinmarket_kr.agents.news_agent import (
+    AM_NEWS_WINDOW_END_TIME,
+    AM_NEWS_WINDOW_START_TIME,
+    PM_NEWS_WINDOW_END_TIME,
+    PM_NEWS_WINDOW_START_TIME,
+    NewsAgent,
+)
 from twinmarket_kr.community.agent import CommunityAgent
 from twinmarket_kr.community.badge import calculate_badges
 from twinmarket_kr.community.posting import posting_decision
@@ -196,10 +202,14 @@ async def run_simulation(
         _reset_runtime_tables(sim_db_path)
     memory = MemoryAgent(sim_db_path)
     fundamental = FundamentalAgent(sim_db_path)
+    # CLI가 뉴스 CSV를 명시하면(가짜뉴스 주입 등) 그 CSV를 쓰고, 아니면 JSON split을 쓴다.
+    news_csv_override = processed_news_csv is not None or daily_news_csv is not None
     news = NewsAgent(
-        processed_csv_path=processed_news_path,
-        daily_csv_path=daily_news_path,
+        processed_csv_path=processed_news_path if news_csv_override else None,
+        daily_csv_path=daily_news_path if news_csv_override else None,
         include_fake_news=fake_news_mode == "on",
+        use_json_splits=not news_csv_override,
+        daily_seed=random_seed,
     )
     exchange = ExchangeAgent(sim_db_path)
     execution_prices = _load_execution_prices(fundamental, dates)
@@ -336,8 +346,8 @@ async def run_simulation(
                 market_features_date=previous_by_date[day] if information_mode != "same_day" else day,
                 news_max_date=am_news_max_date,
                 news_start_date=previous_by_date[day] if information_mode == "pre_close_cutoff" else None,
-                news_start_time=config.MARKET_CLOSE_TIME if information_mode == "pre_close_cutoff" else None,
-                news_end_time="08:59" if information_mode == "pre_close_cutoff" else None,
+                news_start_time=AM_NEWS_WINDOW_START_TIME if information_mode == "pre_close_cutoff" else None,
+                news_end_time=AM_NEWS_WINDOW_END_TIME if information_mode == "pre_close_cutoff" else None,
                 open_price=prices["open"],
                 previous_close=previous_close,
                 execution_reference="open price",
@@ -363,8 +373,8 @@ async def run_simulation(
                 market_features_date=day,
                 news_max_date=pm_news_max_date,
                 news_start_date=day if information_mode == "pre_close_cutoff" else None,
-                news_start_time="08:59" if information_mode == "pre_close_cutoff" else None,
-                news_end_time=config.MARKET_CLOSE_TIME if information_mode == "pre_close_cutoff" else None,
+                news_start_time=PM_NEWS_WINDOW_START_TIME if information_mode == "pre_close_cutoff" else None,
+                news_end_time=PM_NEWS_WINDOW_END_TIME if information_mode == "pre_close_cutoff" else None,
                 open_price=prices["open"],
                 previous_close=previous_close,
                 execution_reference="close price",

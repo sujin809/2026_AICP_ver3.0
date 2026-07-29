@@ -1,0 +1,783 @@
+<title>RN Community A/B — 실행 파이프라인 스키마</title>
+
+<style>
+  :root {
+    --ground: #f6f7f9;
+    --surface: #ffffff;
+    --surface-2: #eef0f4;
+    --ink: #11151b;
+    --ink-2: #3d4650;
+    --ink-3: #6b747f;
+    --line: #d8dce2;
+    --line-2: #c2c8d0;
+    --on: #2f6f8f;
+    --on-soft: #e3eef4;
+    --off: #828a94;
+    --off-soft: #e9ebee;
+    --stop: #b4462f;
+    --stop-soft: #f7e6e1;
+    --warn: #a8762a;
+    --warn-soft: #f7eede;
+
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+
+    --fs-xs: 0.6875rem;
+    --fs-sm: 0.8125rem;
+    --fs-base: 0.9375rem;
+    --fs-md: 1.0625rem;
+    --fs-lg: 1.375rem;
+    --fs-xl: 2rem;
+    --fs-2xl: 2.75rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #0d1115;
+      --surface: #151a20;
+      --surface-2: #1c222a;
+      --ink: #dfe4ea;
+      --ink-2: #b0b8c2;
+      --ink-3: #7f8893;
+      --line: #262d36;
+      --line-2: #333c47;
+      --on: #6fb3d2;
+      --on-soft: #16303d;
+      --off: #7d858f;
+      --off-soft: #1e242b;
+      --stop: #e08066;
+      --stop-soft: #3a1f18;
+      --warn: #d6a054;
+      --warn-soft: #362a15;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0d1115;
+    --surface: #151a20;
+    --surface-2: #1c222a;
+    --ink: #dfe4ea;
+    --ink-2: #b0b8c2;
+    --ink-3: #7f8893;
+    --line: #262d36;
+    --line-2: #333c47;
+    --on: #6fb3d2;
+    --on-soft: #16303d;
+    --off: #7d858f;
+    --off-soft: #1e242b;
+    --stop: #e08066;
+    --stop-soft: #3a1f18;
+    --warn: #d6a054;
+    --warn-soft: #362a15;
+  }
+
+  :root[data-theme="light"] {
+    --ground: #f6f7f9;
+    --surface: #ffffff;
+    --surface-2: #eef0f4;
+    --ink: #11151b;
+    --ink-2: #3d4650;
+    --ink-3: #6b747f;
+    --line: #d8dce2;
+    --line-2: #c2c8d0;
+    --on: #2f6f8f;
+    --on-soft: #e3eef4;
+    --off: #828a94;
+    --off-soft: #e9ebee;
+    --stop: #b4462f;
+    --stop-soft: #f7e6e1;
+    --warn: #a8762a;
+    --warn-soft: #f7eede;
+  }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: var(--fs-base);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 3rem 1.5rem 6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 4rem;
+  }
+
+  /* ---------- shared type ---------- */
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: var(--fs-xs);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  h1 {
+    font-size: var(--fs-2xl);
+    line-height: 1.08;
+    letter-spacing: -0.03em;
+    font-weight: 700;
+    text-wrap: balance;
+  }
+
+  h2 {
+    font-size: var(--fs-lg);
+    letter-spacing: -0.02em;
+    font-weight: 650;
+    text-wrap: balance;
+  }
+
+  h3 {
+    font-size: var(--fs-md);
+    letter-spacing: -0.01em;
+    font-weight: 600;
+  }
+
+  p { max-width: 68ch; color: var(--ink-2); }
+
+  code, .m { font-family: var(--mono); font-size: 0.92em; }
+  .m { font-variant-numeric: tabular-nums; }
+  .path { color: var(--ink-3); }
+
+  section { display: flex; flex-direction: column; gap: 1.5rem; }
+
+  .sec-head { display: flex; flex-direction: column; gap: 0.4rem; }
+  .rule { height: 1px; background: var(--line); }
+
+  /* ---------- masthead ---------- */
+  .mast { display: flex; flex-direction: column; gap: 1.25rem; }
+  .mast .lede { font-size: var(--fs-md); color: var(--ink-2); max-width: 62ch; }
+
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+  }
+  .fact { background: var(--surface); padding: 0.85rem 1rem; display: flex; flex-direction: column; gap: 0.25rem; }
+  .fact dt { font-family: var(--mono); font-size: var(--fs-xs); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
+  .fact dd { font-family: var(--mono); font-size: var(--fs-md); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+  .fact dd small { font-size: var(--fs-sm); color: var(--ink-3); font-weight: 400; }
+
+  /* ---------- two-lane track ---------- */
+  .lanes { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--line); background: var(--surface); }
+
+  .lane-head {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border-bottom: 1px solid var(--line);
+  }
+  .lane-head > div { padding: 0.7rem 1rem; display: flex; align-items: baseline; gap: 0.6rem; }
+  .lane-head > div + div { border-left: 1px solid var(--line); }
+  .lane-name { font-family: var(--mono); font-size: var(--fs-sm); font-weight: 600; letter-spacing: 0.02em; }
+  .lane-head .arm-on .lane-name { color: var(--on); }
+  .lane-head .arm-off .lane-name { color: var(--off); }
+  .lane-note { font-size: var(--fs-xs); color: var(--ink-3); }
+
+  .track { display: grid; grid-template-columns: 1fr 1fr; }
+
+  .stage {
+    padding: 0.9rem 1rem;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    min-width: 0;
+  }
+  .stage:last-child, .stage.last { border-bottom: none; }
+
+  .stage-shared { grid-column: 1 / -1; background: var(--surface-2); }
+  .stage-on { border-left: 3px solid var(--on); background: var(--on-soft); }
+  .stage-off { border-left: 1px dashed var(--line-2); border-right: none; color: var(--ink-3); background: transparent; }
+  .track > .stage-on + .stage-off { border-left: 1px dashed var(--line-2); }
+
+  .stage-title { font-family: var(--mono); font-size: var(--fs-sm); font-weight: 600; letter-spacing: -0.005em; }
+  .stage-on .stage-title { color: var(--on); }
+  .stage-sub { font-size: var(--fs-xs); color: var(--ink-3); line-height: 1.45; }
+  .stage-shared .stage-title { color: var(--ink); }
+
+  .barrier {
+    grid-column: 1 / -1;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--line);
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+  .chain { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+  .chain-node {
+    font-family: var(--mono);
+    font-size: var(--fs-xs);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0.3rem 0.55rem;
+    border: 1px solid var(--line-2);
+    background: var(--surface);
+    white-space: nowrap;
+  }
+  .chain-arrow { color: var(--ink-3); font-family: var(--mono); font-size: var(--fs-xs); }
+
+  /* ---------- numbered flow ---------- */
+  .flow { display: flex; flex-direction: column; gap: 0; }
+  .step {
+    display: grid;
+    grid-template-columns: 3.25rem 1fr;
+    gap: 1rem;
+    padding: 0.85rem 0;
+    border-top: 1px solid var(--line);
+    align-items: start;
+  }
+  .step:last-child { border-bottom: 1px solid var(--line); }
+  .step-idx {
+    font-family: var(--mono);
+    font-size: var(--fs-xs);
+    letter-spacing: 0.08em;
+    color: var(--ink-3);
+    padding-top: 0.2rem;
+    white-space: nowrap;
+  }
+  .step-body { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
+  .step-name { font-family: var(--mono); font-size: var(--fs-sm); font-weight: 600; }
+  .step-desc { font-size: var(--fs-sm); color: var(--ink-2); }
+  .step-meta { font-size: var(--fs-xs); color: var(--ink-3); font-family: var(--mono); }
+
+  .tag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: var(--fs-xs);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0.12rem 0.4rem;
+    border: 1px solid currentColor;
+    vertical-align: 0.08em;
+  }
+  .tag-llm { color: var(--on); }
+  .tag-srv { color: var(--ink-3); }
+
+  .phase-label {
+    font-family: var(--mono);
+    font-size: var(--fs-xs);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--on);
+    padding-bottom: 0.15rem;
+  }
+
+  /* ---------- matrix ---------- */
+  .scroller { overflow-x: auto; border: 1px solid var(--line); background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; min-width: 720px; font-size: var(--fs-sm); }
+  th, td { padding: 0.65rem 0.85rem; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th {
+    font-family: var(--mono);
+    font-size: var(--fs-xs);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 500;
+    white-space: nowrap;
+    background: var(--surface-2);
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.depth { font-family: var(--mono); font-weight: 600; white-space: nowrap; }
+  td.depth small { display: block; font-weight: 400; color: var(--ink-3); font-size: var(--fs-xs); }
+  .yes { color: var(--on); font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .no { color: var(--ink-3); font-family: var(--mono); }
+  .qual { display: block; font-size: var(--fs-xs); color: var(--ink-3); }
+
+  /* ---------- funnel ---------- */
+  .funnel { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--line); background: var(--surface); }
+  .band { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 0.9fr); border-bottom: 1px solid var(--line); }
+  .band:last-child { border-bottom: none; }
+  .band-main { padding: 0.9rem 1rem; display: flex; flex-direction: column; gap: 0.3rem; }
+  .band-strip { height: 4px; background: var(--on); margin-bottom: 0.35rem; }
+  .band-cut {
+    padding: 0.9rem 1rem;
+    border-left: 1px solid var(--line);
+    background: var(--surface-2);
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .cut-label { font-family: var(--mono); font-size: var(--fs-xs); letter-spacing: 0.1em; text-transform: uppercase; color: var(--stop); }
+  .cut-list { font-size: var(--fs-xs); color: var(--ink-3); font-family: var(--mono); line-height: 1.7; }
+
+  /* ---------- halt / blockers ---------- */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); }
+  .card { background: var(--surface); padding: 1rem; display: flex; flex-direction: column; gap: 0.45rem; }
+  .card-tag { font-family: var(--mono); font-size: var(--fs-xs); letter-spacing: 0.1em; text-transform: uppercase; }
+  .card-title { font-weight: 600; font-size: var(--fs-sm); letter-spacing: -0.005em; }
+  .card-body { font-size: var(--fs-xs); color: var(--ink-2); line-height: 1.65; }
+  .card-path { font-family: var(--mono); font-size: var(--fs-xs); color: var(--ink-3); }
+  .card.stop { border-left: 3px solid var(--stop); }
+  .card.stop .card-tag { color: var(--stop); }
+  .card.warn { border-left: 3px solid var(--warn); }
+  .card.warn .card-tag { color: var(--warn); }
+
+  .halts { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--line); background: var(--surface); }
+  .halt { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); border-bottom: 1px solid var(--line); }
+  .halt:last-child { border-bottom: none; }
+  .halt-when { padding: 0.7rem 1rem; font-size: var(--fs-sm); }
+  .halt-where { padding: 0.7rem 1rem; border-left: 1px solid var(--line); font-family: var(--mono); font-size: var(--fs-xs); color: var(--ink-3); background: var(--surface-2); }
+
+  footer { font-size: var(--fs-xs); color: var(--ink-3); font-family: var(--mono); line-height: 1.8; }
+
+  @media (max-width: 720px) {
+    h1 { font-size: var(--fs-xl); }
+    .wrap { padding: 2rem 1rem 4rem; gap: 3rem; }
+    .track, .lane-head { grid-template-columns: 1fr; }
+    .stage-shared { grid-column: auto; }
+    .lane-head > div + div { border-left: none; border-top: 1px solid var(--line); }
+    .stage-off { border-left: 3px dashed var(--line-2); }
+    .band, .halt { grid-template-columns: 1fr; }
+    .band-cut, .halt-where { border-left: none; border-top: 1px solid var(--line); }
+  }
+</style>
+
+<div class="wrap">
+
+  <!-- ============ MASTHEAD ============ -->
+  <header class="mast">
+    <span class="eyebrow">RealNews Community A/B · 실행 경로 스키마</span>
+    <h1>커뮤니티 ON/OFF 2-arm 파이프라인</h1>
+    <p class="lede">
+      이번 실행은 <code>scripts/09</code> preflight → <code>scripts/12</code> operate 로 이어지는
+      <strong>RN 경로</strong>입니다. 레거시 <code>simulation.py</code> 커뮤니티 모듈은 이 경로에서 한 줄도 호출되지 않습니다.
+    </p>
+
+    <dl class="facts">
+      <div class="fact"><dt>에이전트</dt><dd>100 <small>D0 30 / D1 55 / D2 15</small></dd></div>
+      <div class="fact"><dt>게시 가능</dt><dd>70 <small>D1+D2만</small></dd></div>
+      <div class="fact"><dt>기간</dt><dd>45일 <small>90 event</small></dd></div>
+      <div class="fact"><dt>주분석</dt><dd>42일 <small>burn-in 3일 제외</small></dd></div>
+      <div class="fact"><dt>커뮤니티 실효</dt><dd>44일 <small>D1 AM · 최종 PM 제외</small></dd></div>
+      <div class="fact"><dt>Best K</dt><dd>5 <small>부족하면 있는 만큼</small></dd></div>
+      <div class="fact"><dt>모델</dt><dd>qwen3.5 <small>reasoning off · temp 0.2</small></dd></div>
+      <div class="fact"><dt>재시도</dt><dd>0 <small>fail-closed</small></dd></div>
+    </dl>
+  </header>
+
+  <!-- ============ TWO LANES ============ -->
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">01 · 한 event 안에서 두 arm이 갈리는 지점</span>
+      <h2>넓은 박스는 두 arm이 동일하고, 좁은 칸에서만 처치가 갈립니다</h2>
+      <p>
+        처치 차이 허용 목록은 <code>community_mode</code> 하나뿐입니다
+        (<span class="path">spec.py:33</span>). 아래에서 ON 레인에만 존재하는 두 블록이 실험의 전부입니다.
+      </p>
+    </div>
+
+    <div class="lanes">
+      <div class="lane-head">
+        <div class="arm-on">
+          <span class="lane-name">RN_COMM_ON</span>
+          <span class="lane-note">처치</span>
+        </div>
+        <div class="arm-off">
+          <span class="lane-name">RN_COMM_OFF</span>
+          <span class="lane-note">대조</span>
+        </div>
+      </div>
+
+      <div class="track">
+        <div class="stage stage-shared">
+          <span class="stage-title">0 · mature_outcomes_for_event()</span>
+          <span class="stage-sub">도래한 H1/H5 가격 성과 성숙 — 모델 호출 없음</span>
+        </div>
+
+        <div class="stage stage-on">
+          <span class="stage-title">1 · community.prepare_event()</span>
+          <span class="stage-sub">AM event에서만 실동작. 전날 PM 보드를 배달하고 해석해 claim을 만든다</span>
+        </div>
+        <div class="stage stage-off">
+          <span class="stage-title">— no-op</span>
+          <span class="stage-sub">즉시 빈 튜플 반환. 노출 행 0건</span>
+        </div>
+
+        <div class="barrier">
+          <span class="eyebrow">순차 barrier — 100명 × 2 arm 전원이 각 단계를 끝내야 다음으로</span>
+          <div class="chain">
+            <span class="chain-node">STB</span><span class="chain-arrow">→</span>
+            <span class="chain-node">Analysis</span><span class="chain-arrow">→</span>
+            <span class="chain-node">Decision</span><span class="chain-arrow">→</span>
+            <span class="chain-node">Fill</span><span class="chain-arrow">→</span>
+            <span class="chain-node">Post-fill LTB</span>
+          </div>
+          <span class="stage-sub">
+            STB는 <em>오늘 뉴스 + 오늘 실제 노출된 커뮤니티 claim만</em> 해석한다. Fill은 결정론적 체결이며 모델 호출이 없다.
+            OFF arm도 <code>community_claims: []</code> 키를 그대로 받아 스키마는 대칭이다.
+          </span>
+        </div>
+
+        <div class="stage stage-on last">
+          <span class="stage-title">2 · community.after_event()</span>
+          <span class="stage-sub">PM event에서만 실동작. 게시 → 선택 열람 → 반응 → Best 동결까지 단일 트랜잭션</span>
+        </div>
+        <div class="stage stage-off last">
+          <span class="stage-title">— no-op checkpoint</span>
+          <span class="stage-sub">게시·읽기·trace가 하나라도 들어오면 예외. checkpoint 1행만 기록</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ COMMUNITY SUB-PIPELINE ============ -->
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">02 · ON arm 커뮤니티 내부</span>
+      <h2>보드는 PM에 만들어지고, belief에는 다음 AM에 들어갑니다</h2>
+      <p>
+        PM의 게시·읽기·반응은 그날 PM 주문의 원인이 될 수 없습니다. 전부 post-fill LTB 커밋 이후에 일어납니다.
+      </p>
+    </div>
+
+    <div>
+      <div class="phase-label">거래일 D · PM — after_event()</div>
+      <div class="flow">
+        <div class="step">
+          <span class="step-idx">P1</span>
+          <div class="step-body">
+            <span class="step-name">post_drafts() <span class="tag tag-llm">LLM</span></span>
+            <span class="step-desc">D1·D2 70명이 각자 한 번씩 게시 여부를 판단한다. 강제 게시 없음 — <code>will_post: false</code>면 skip trace만 남는다.</span>
+            <span class="step-meta">입력 = persona + LTB_t 6차원 + view_change(해시) + 오늘 실제 체결</span>
+          </div>
+        </div>
+        <div class="step">
+          <span class="step-idx">P2</span>
+          <div class="step-body">
+            <span class="step-name">preview_candidate_posts() <span class="tag tag-srv">서버</span></span>
+            <span class="step-desc">본문·프로필을 뺀 후보 메타만 만들고 서버가 post_id를 확정한다. post_id는 순번이 아니라 내용 해시라 응답 도착 순서와 무관하다.</span>
+          </div>
+        </div>
+        <div class="step">
+          <span class="step-idx">P3</span>
+          <div class="step-body">
+            <span class="step-name">selective_reads() <span class="tag tag-llm">LLM ×2</span></span>
+            <span class="step-desc">select — 자기 글을 제외한 후보에서 D1은 최대 5개, D2는 최대 10개를 고른다. react — 고른 글의 본문 전체를 읽고 like / unlike / none.</span>
+            <span class="step-meta">후보 보드는 이 단계 시작 전에 동결 → 같은 PM 안에서 남의 반응을 볼 수 없다</span>
+          </div>
+        </div>
+        <div class="step">
+          <span class="step-idx">P4</span>
+          <div class="step-body">
+            <span class="step-name">finalized_post_drafts() <span class="tag tag-srv">서버</span></span>
+            <span class="step-desc">score = like − unlike 를 적용한다.</span>
+          </div>
+        </div>
+        <div class="step">
+          <span class="step-idx">P5</span>
+          <div class="step-body">
+            <span class="step-name">run_pm_phase() <span class="tag tag-srv">서버</span></span>
+            <span class="step-desc">보드를 동결하고 Best를 <code>(−score, −like, post_id)</code> 순으로 최대 5개 고른다. selected 노출·Best 예약·trace를 단일 SQLite 트랜잭션으로 커밋한다.</span>
+            <span class="step-meta">selected 노출은 delivered로 기록되지만 visible_from은 다음 AM</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="phase-label">거래일 D+1 · AM — prepare_event()</div>
+      <div class="flow">
+        <div class="step">
+          <span class="step-idx">A1</span>
+          <div class="step-body">
+            <span class="step-name">deliver_scheduled_best() <span class="tag tag-srv">서버</span></span>
+            <span class="step-desc">Best 최대 5개를 <strong>본문 전체</strong>로 100명 전원에게 배달한다. D0도 여기서 커뮤니티를 처음 본다.</span>
+            <span class="step-meta">배달 시각은 봉인 calendar가 정한다 · 09:00 이후 배달 금지</span>
+          </div>
+        </div>
+        <div class="step">
+          <span class="step-idx">A2</span>
+          <div class="step-body">
+            <span class="step-name">interpretation_payloads() <span class="tag tag-srv">서버</span></span>
+            <span class="step-desc">에이전트별 노출을 조립한다 — Best 본문, 어제 선택해 읽은 본문, 그리고 D1·D2에게는 그날 나머지 글의 <em>제목만</em>.</span>
+          </div>
+        </div>
+        <div class="step">
+          <span class="step-idx">A3</span>
+          <div class="step-body">
+            <span class="step-name">interpret() <span class="tag tag-llm">LLM</span></span>
+            <span class="step-desc">노출이 1건이라도 있는 에이전트만 호출된다. 자유 서술이 아니라 고정 스키마 — 분위기 · claim 배열 · 공감/반대 · 불확실성.</span>
+            <span class="step-meta">각 claim은 실제 노출 ID를 인용하고, 인용문은 원문의 정확한 부분문자열이어야 한다</span>
+          </div>
+        </div>
+        <div class="step">
+          <span class="step-idx">A4</span>
+          <div class="step-body">
+            <span class="step-name">record_interpretation_claims() <span class="tag tag-srv">서버</span></span>
+            <span class="step-desc">서버가 claim_id를 부여하고 노출과의 junction을 만든다. 모델은 ID를 만들어낼 수 없다.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ DEPTH MATRIX ============ -->
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">03 · depth별 권한과 노출</span>
+      <h2>누가 무엇을 보는가</h2>
+      <p>
+        depth는 DB <code>news_depth</code>가 단일 진실이고, persona prompt는 거기서 렌더링되는 파생물입니다.
+        읽기 상한을 넘으면 잘라내지 않고 예외를 던집니다.
+      </p>
+    </div>
+
+    <div class="scroller">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Depth</th>
+            <th scope="col">게시</th>
+            <th scope="col">선택 열람</th>
+            <th scope="col">반응</th>
+            <th scope="col">Best 5 수신</th>
+            <th scope="col">그날 나머지 글</th>
+            <th scope="col">작성자 정보</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="depth">D0<small>30명</small></td>
+            <td class="no">✗</td>
+            <td class="no">✗<span class="qual">경로 진입 시 예외</span></td>
+            <td class="no">✗</td>
+            <td class="yes">본문 전체<span class="qual">다음 AM</span></td>
+            <td class="no">✗</td>
+            <td class="no">—</td>
+          </tr>
+          <tr>
+            <td class="depth">D1<small>55명</small></td>
+            <td class="yes">1일 1회</td>
+            <td class="yes">최대 5</td>
+            <td class="yes">like / unlike / none</td>
+            <td class="yes">본문 전체<span class="qual">다음 AM</span></td>
+            <td class="yes">제목만<span class="qual">자기 글 제외 전부</span></td>
+            <td class="yes">공개 프로필<span class="qual">선택 열람 글에만</span></td>
+          </tr>
+          <tr>
+            <td class="depth">D2<small>15명</small></td>
+            <td class="yes">1일 1회</td>
+            <td class="yes">최대 10</td>
+            <td class="yes">like / unlike / none</td>
+            <td class="yes">본문 전체<span class="qual">다음 AM</span></td>
+            <td class="yes">제목만<span class="qual">자기 글 제외 전부</span></td>
+            <td class="yes">공개 프로필<span class="qual">선택 열람 글에만</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="cards">
+      <div class="card warn">
+        <span class="card-tag">주의</span>
+        <span class="card-title">공개 프로필은 전원 동일 상수입니다</span>
+        <span class="card-body">
+          70명 모두 <code>registered-community-member / neutral / 50</code>. 다르면 preflight가 실패합니다.
+          평판 신호는 존재하지 않고, 익명 코드도 없어 작성자를 여러 날에 걸쳐 인식할 수 없습니다.
+        </span>
+        <span class="card-path">preflight_inputs.py:52-58</span>
+      </div>
+      <div class="card warn">
+        <span class="card-tag">주의</span>
+        <span class="card-title">선택 화면에는 인기 신호가 없습니다</span>
+        <span class="card-body">
+          후보의 score는 이 시점에 항상 0입니다(반응은 이후 단계). 독자는 제목과 글 유형만 보고 고릅니다.
+        </span>
+        <span class="card-path">community_provider.py:330-341</span>
+      </div>
+      <div class="card warn">
+        <span class="card-tag">미결정</span>
+        <span class="card-title">Best는 자기 글을 걸러내지 않습니다</span>
+        <span class="card-body">
+          선택 열람은 자기 글을 엄격히 배제하는데 Best 배달에는 필터가 없습니다. 익명이라 작성자가 자기 글을 타인 의견으로 해석할 수 있습니다.
+        </span>
+        <span class="card-path">community.py:1221</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FUNNEL ============ -->
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">04 · 원문이 belief에 닿기까지</span>
+      <h2>각 경계에서 무엇이 잘려나가는가</h2>
+      <p>
+        게시글 원문은 해석 단계에서만 쓰이고, STB로는 검증된 claim만 넘어갑니다.
+        "원문 노출"과 "belief에 반영되는 근거"가 분리되어 있습니다.
+      </p>
+    </div>
+
+    <div class="funnel">
+      <div class="band">
+        <div class="band-main">
+          <div class="band-strip" style="width: 100%;"></div>
+          <span class="step-name">게시글 원문</span>
+          <span class="step-desc">제목 + 본문 전체 + body hash + rank + 공개 프로필</span>
+        </div>
+        <div class="band-cut">
+          <span class="cut-label">여기서 제거</span>
+          <span class="cut-list">author_agent_id · 포트폴리오 · 현금 · 체결 · 사설 belief · 안정적 작성자 식별자</span>
+        </div>
+      </div>
+
+      <div class="band">
+        <div class="band-main">
+          <div class="band-strip" style="width: 62%;"></div>
+          <span class="step-name">community interpretation</span>
+          <span class="step-desc">분위기 + claim 배열 + 공감/반대 + 불확실성 — 원문을 읽는 마지막 지점</span>
+        </div>
+        <div class="band-cut">
+          <span class="cut-label">서버 검증</span>
+          <span class="cut-list">노출 소유권 · 인용문 원문 일치 · 원문 유출 차단 <br>의미·진실성은 판정하지 않음</span>
+        </div>
+      </div>
+
+      <div class="band">
+        <div class="band-main">
+          <div class="band-strip" style="width: 34%;"></div>
+          <span class="step-name">STB 증거</span>
+          <span class="step-desc"><code>claim_id · claim_text · stance · source_exposure_ids</code></span>
+        </div>
+        <div class="band-cut">
+          <span class="cut-label">여기서 제거</span>
+          <span class="cut-list">원문 본문 전체 · 인용문 · 공개 프로필 · rank</span>
+        </div>
+      </div>
+
+      <div class="band">
+        <div class="band-main">
+          <div class="band-strip" style="width: 16%;"></div>
+          <span class="step-name">LTB sanitized registry</span>
+          <span class="step-desc"><code>evidence_id · kind · lineage_sha256</code> — 커뮤니티가 유일하게 지속되는 형태</span>
+        </div>
+        <div class="band-cut">
+          <span class="cut-label">여기서 제거</span>
+          <span class="cut-list">claim_text 포함 모든 자연어</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ HALTS ============ -->
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">05 · 실행이 멈추는 지점</span>
+      <h2>재시도가 없습니다 — 한 건의 위반이 양쪽 arm을 되돌립니다</h2>
+      <p>
+        레거시는 스키마 위반 시 4회까지 재시도했지만, RN은 즉시 스냅샷을 복원하고 정지합니다.
+        재개하면 이미 검증된 응답은 journal에서 재생하고 실패한 호출만 다시 부릅니다.
+      </p>
+    </div>
+
+    <div class="halts">
+      <div class="halt">
+        <div class="halt-when">게시 응답이 정해진 두 형태를 벗어남</div>
+        <div class="halt-where">community_provider.py:940-953</div>
+      </div>
+      <div class="halt">
+        <div class="halt-when">제목 300자 · 본문 8,000자 초과</div>
+        <div class="halt-where">community.py:92-93 · truncate 없음</div>
+      </div>
+      <div class="halt">
+        <div class="halt-when">응답이 <code>max_tokens</code>에서 잘림</div>
+        <div class="halt-where">stage_adapter.py:237-238 · finish_reason ≠ stop</div>
+      </div>
+      <div class="halt">
+        <div class="halt-when">선택 개수가 depth 상한 초과</div>
+        <div class="halt-where">community_provider.py:964 · community.py:1889</div>
+      </div>
+      <div class="halt">
+        <div class="halt-when">인용문이 원문의 정확한 부분문자열이 아님</div>
+        <div class="halt-where">community.py:1419-1421</div>
+      </div>
+      <div class="halt">
+        <div class="halt-when">게시 시점에 해당 에이전트의 체결 행이 없음</div>
+        <div class="halt-where">community_provider.py:757 · allow_hold=false 전제</div>
+      </div>
+      <div class="halt">
+        <div class="halt-when">D0가 읽기 경로에 도달</div>
+        <div class="halt-where">community_provider.py:309 · silent skip 아님</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ BEFORE RUN ============ -->
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">06 · 유료 실행 전 결정</span>
+      <h2>돌리기 전에 처리해야 할 세 가지</h2>
+    </div>
+
+    <div class="cards">
+      <div class="card stop">
+        <span class="card-tag">차단 위험</span>
+        <span class="card-title">max_tokens 1,024 vs 본문 8,000자</span>
+        <span class="card-body">
+          검증기는 본문 8,000자를 허용하는데 게시 호출에는 1,024 토큰만 줍니다.
+          모델이 <code>column</code> 유형을 골라 길게 쓰면 응답이 잘리고 run 전체가 멈춥니다.
+          최대 3,150회 호출에서 이 경로가 열려 있습니다.
+        </span>
+        <span class="card-path">community_provider.py:69-76</span>
+      </div>
+      <div class="card stop">
+        <span class="card-tag">설계 결정</span>
+        <span class="card-title">Best 배달의 자기 글 처리</span>
+        <span class="card-body">
+          배제할지, 아니면 <code>self_echo</code> 플래그로 사후 통제할지 정해야 합니다.
+          지금은 테스트가 "전원 배달"을 고정하고 있습니다.
+        </span>
+        <span class="card-path">community.py:1221</span>
+      </div>
+      <div class="card stop">
+        <span class="card-tag">통계 정의</span>
+        <span class="card-title">제목만 본 노출을 셀 것인가</span>
+        <span class="card-body">
+          D1·D2가 받는 "그날 나머지 글 제목"은 노출 원장에 행이 없고 관찰 로그에만 남습니다.
+          원장만으로 집계하면 리더당 하루 최대 99건이 빠집니다.
+        </span>
+        <span class="card-path">community.py:2825-2844</span>
+      </div>
+      <div class="card">
+        <span class="card-tag">확인</span>
+        <span class="card-title">study_spec 수치 육안 확인</span>
+        <span class="card-body">
+          <code>best_k</code>, <code>depth1_selective_read_cap</code>, <code>depth2_selective_read_cap</code>은
+          저장소 밖 JSON에서 옵니다. 코드가 강제하는 건 K ≤ 5 와 D2 ≥ D1 뿐입니다.
+        </span>
+        <span class="card-path">spec.py:994-997</span>
+      </div>
+      <div class="card">
+        <span class="card-tag">확인</span>
+        <span class="card-title">읽기 프롬프트의 "배지·평판" 문구</span>
+        <span class="card-body">
+          선택 기준으로 안내하고 있지만 실제 프로필은 전원 동일합니다. 문구를 두든 빼든 결정이 필요합니다.
+        </span>
+        <span class="card-path">prompts/common/community_reading.txt:29</span>
+      </div>
+      <div class="card">
+        <span class="card-tag">확인</span>
+        <span class="card-title">뉴스 입력 해시 드리프트</span>
+        <span class="card-body">
+          커뮤니티와 무관하지만 candidate 검증이 실패 중입니다. 봉인 전에 해소해야 합니다.
+        </span>
+        <span class="card-path">outputs/daily_news_selection.csv</span>
+      </div>
+    </div>
+  </section>
+
+  <div class="rule"></div>
+  <footer>
+    검토일 2026-07-29 · 정적 코드 대조 + 로컬 테스트 (외부 API 호출 없음)<br>
+    커뮤니티 테스트 53건 통과 · rn_ab 전체 283건 중 1건 실패(뉴스 입력 해시, 커뮤니티 무관)<br>
+    상세 근거는 COMMUNITY_SETTING_REVIEW.md
+  </footer>
+
+</div>

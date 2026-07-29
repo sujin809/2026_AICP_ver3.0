@@ -1,0 +1,2232 @@
+{
+  "per_event": [
+    {
+      "date": "2026-02-27",
+      "subturn": "AM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 3,
+        "섹터": 6,
+        "경제": 6
+      },
+      "short": true
+    },
+    {
+      "date": "2026-02-27",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 30,
+        "섹터": 26,
+        "경제": 10
+      },
+      "short": false
+    },
+    {
+      "date": "2026-02-28",
+      "subturn": "AM",
+      "delivered": 3,
+      "by_bucket": {
+        "종목": 1,
+        "경제": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-02-28",
+      "subturn": "PM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 1,
+        "섹터": 1,
+        "경제": 4
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-01",
+      "subturn": "PM",
+      "delivered": 5,
+      "by_bucket": {
+        "섹터": 20,
+        "경제": 22
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-02",
+      "subturn": "AM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 1,
+        "섹터": 2,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-02",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 15,
+        "섹터": 14,
+        "경제": 29
+      },
+      "short": false
+    },
+    {
+      "date": "2026-03-03",
+      "subturn": "AM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 6,
+        "섹터": 7,
+        "경제": 5
+      },
+      "short": false
+    },
+    {
+      "date": "2026-03-03",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 33,
+        "섹터": 28,
+        "경제": 22
+      },
+      "short": false
+    },
+    {
+      "date": "2026-03-04",
+      "subturn": "AM",
+      "delivered": 7,
+      "by_bucket": {
+        "종목": 2,
+        "섹터": 9,
+        "경제": 5
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-04",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 34,
+        "섹터": 21,
+        "경제": 34
+      },
+      "short": false
+    },
+    {
+      "date": "2026-03-05",
+      "subturn": "AM",
+      "delivered": 9,
+      "by_bucket": {
+        "종목": 4,
+        "섹터": 5,
+        "경제": 6
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-05",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 36,
+        "섹터": 26,
+        "경제": 40
+      },
+      "short": false
+    },
+    {
+      "date": "2026-03-06",
+      "subturn": "AM",
+      "delivered": 5,
+      "by_bucket": {
+        "섹터": 3,
+        "경제": 9
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-06",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 20,
+        "섹터": 15,
+        "경제": 27
+      },
+      "short": false
+    },
+    {
+      "date": "2026-03-07",
+      "subturn": "AM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 1,
+        "섹터": 1,
+        "경제": 4
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-07",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 6,
+        "섹터": 3,
+        "경제": 4
+      },
+      "short": false
+    },
+    {
+      "date": "2026-03-08",
+      "subturn": "AM",
+      "delivered": 1,
+      "by_bucket": {
+        "종목": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-08",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 17,
+        "섹터": 11,
+        "경제": 19
+      },
+      "short": false
+    },
+    {
+      "date": "2026-03-09",
+      "subturn": "AM",
+      "delivered": 6,
+      "by_bucket": {
+        "종목": 3,
+        "섹터": 1,
+        "경제": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-09",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 16,
+        "섹터": 25,
+        "경제": 31
+      },
+      "short": false
+    },
+    {
+      "date": "2026-03-10",
+      "subturn": "AM",
+      "delivered": 7,
+      "by_bucket": {
+        "종목": 2,
+        "섹터": 3,
+        "경제": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-10",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 40,
+        "섹터": 30,
+        "경제": 22
+      },
+      "short": false
+    },
+    {
+      "date": "2026-03-11",
+      "subturn": "AM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 4,
+        "섹터": 5,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-11",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 43,
+        "섹터": 29,
+        "경제": 26
+      },
+      "short": false
+    },
+    {
+      "date": "2026-03-12",
+      "subturn": "AM",
+      "delivered": 9,
+      "by_bucket": {
+        "종목": 5,
+        "섹터": 2,
+        "경제": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-12",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 25,
+        "섹터": 21,
+        "경제": 34
+      },
+      "short": false
+    },
+    {
+      "date": "2026-03-13",
+      "subturn": "AM",
+      "delivered": 7,
+      "by_bucket": {
+        "종목": 2,
+        "섹터": 5,
+        "경제": 10
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-13",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 30,
+        "섹터": 11,
+        "경제": 35
+      },
+      "short": false
+    },
+    {
+      "date": "2026-03-14",
+      "subturn": "AM",
+      "delivered": 3,
+      "by_bucket": {
+        "종목": 1,
+        "경제": 11
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-14",
+      "subturn": "PM",
+      "delivered": 7,
+      "by_bucket": {
+        "종목": 4,
+        "섹터": 1,
+        "경제": 6
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-15",
+      "subturn": "AM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 2,
+        "경제": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-15",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 13,
+        "섹터": 18,
+        "경제": 20
+      },
+      "short": false
+    },
+    {
+      "date": "2026-03-16",
+      "subturn": "AM",
+      "delivered": 7,
+      "by_bucket": {
+        "종목": 3,
+        "섹터": 2,
+        "경제": 5
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-16",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 26,
+        "섹터": 18,
+        "경제": 39
+      },
+      "short": false
+    },
+    {
+      "date": "2026-03-17",
+      "subturn": "AM",
+      "delivered": 9,
+      "by_bucket": {
+        "종목": 4,
+        "섹터": 7,
+        "경제": 5
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-17",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 26,
+        "섹터": 31,
+        "경제": 39
+      },
+      "short": false
+    },
+    {
+      "date": "2026-03-18",
+      "subturn": "AM",
+      "delivered": 6,
+      "by_bucket": {
+        "종목": 4,
+        "경제": 8
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-18",
+      "subturn": "PM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 42,
+        "섹터": 1,
+        "경제": 27
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-19",
+      "subturn": "AM",
+      "delivered": 5,
+      "by_bucket": {
+        "종목": 3,
+        "경제": 4
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-19",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 28,
+        "섹터": 3,
+        "경제": 14
+      },
+      "short": false
+    },
+    {
+      "date": "2026-03-20",
+      "subturn": "AM",
+      "delivered": 3,
+      "by_bucket": {
+        "종목": 2,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-20",
+      "subturn": "PM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 23,
+        "섹터": 1,
+        "경제": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-21",
+      "subturn": "AM",
+      "delivered": 1,
+      "by_bucket": {
+        "종목": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-21",
+      "subturn": "PM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 2,
+        "경제": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-22",
+      "subturn": "AM",
+      "delivered": 1,
+      "by_bucket": {
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-22",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 17,
+        "섹터": 4,
+        "경제": 6
+      },
+      "short": false
+    },
+    {
+      "date": "2026-03-23",
+      "subturn": "AM",
+      "delivered": 2,
+      "by_bucket": {
+        "경제": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-23",
+      "subturn": "PM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 24,
+        "섹터": 1,
+        "경제": 4
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-24",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 23,
+        "섹터": 3,
+        "경제": 2
+      },
+      "short": false
+    },
+    {
+      "date": "2026-03-25",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 31,
+        "섹터": 7,
+        "경제": 5
+      },
+      "short": false
+    },
+    {
+      "date": "2026-03-26",
+      "subturn": "AM",
+      "delivered": 2,
+      "by_bucket": {
+        "종목": 1,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-26",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 30,
+        "섹터": 3,
+        "경제": 8
+      },
+      "short": false
+    },
+    {
+      "date": "2026-03-27",
+      "subturn": "AM",
+      "delivered": 2,
+      "by_bucket": {
+        "종목": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-27",
+      "subturn": "PM",
+      "delivered": 9,
+      "by_bucket": {
+        "종목": 27,
+        "섹터": 2,
+        "경제": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-28",
+      "subturn": "AM",
+      "delivered": 1,
+      "by_bucket": {
+        "종목": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-28",
+      "subturn": "PM",
+      "delivered": 3,
+      "by_bucket": {
+        "종목": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-29",
+      "subturn": "AM",
+      "delivered": 1,
+      "by_bucket": {
+        "종목": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-29",
+      "subturn": "PM",
+      "delivered": 7,
+      "by_bucket": {
+        "종목": 10,
+        "경제": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-30",
+      "subturn": "AM",
+      "delivered": 5,
+      "by_bucket": {
+        "종목": 4,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-30",
+      "subturn": "PM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 19,
+        "섹터": 1,
+        "경제": 5
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-31",
+      "subturn": "AM",
+      "delivered": 5,
+      "by_bucket": {
+        "종목": 4,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-31",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 25,
+        "섹터": 3,
+        "경제": 9
+      },
+      "short": false
+    },
+    {
+      "date": "2026-04-01",
+      "subturn": "AM",
+      "delivered": 1,
+      "by_bucket": {
+        "섹터": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-01",
+      "subturn": "PM",
+      "delivered": 7,
+      "by_bucket": {
+        "종목": 2,
+        "섹터": 6,
+        "경제": 4
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-02",
+      "subturn": "AM",
+      "delivered": 3,
+      "by_bucket": {
+        "종목": 1,
+        "경제": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-02",
+      "subturn": "PM",
+      "delivered": 9,
+      "by_bucket": {
+        "종목": 33,
+        "섹터": 2,
+        "경제": 5
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-03",
+      "subturn": "AM",
+      "delivered": 5,
+      "by_bucket": {
+        "종목": 3,
+        "경제": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-03",
+      "subturn": "PM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 23,
+        "섹터": 1,
+        "경제": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-04",
+      "subturn": "AM",
+      "delivered": 2,
+      "by_bucket": {
+        "종목": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-04",
+      "subturn": "PM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 3,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-05",
+      "subturn": "AM",
+      "delivered": 1,
+      "by_bucket": {
+        "종목": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-05",
+      "subturn": "PM",
+      "delivered": 7,
+      "by_bucket": {
+        "종목": 13,
+        "경제": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-06",
+      "subturn": "AM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 3,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-06",
+      "subturn": "PM",
+      "delivered": 9,
+      "by_bucket": {
+        "종목": 25,
+        "섹터": 2,
+        "경제": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-07",
+      "subturn": "AM",
+      "delivered": 3,
+      "by_bucket": {
+        "종목": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-07",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 39,
+        "섹터": 3,
+        "경제": 7
+      },
+      "short": false
+    },
+    {
+      "date": "2026-04-08",
+      "subturn": "AM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 3,
+        "섹터": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-08",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 45,
+        "섹터": 5,
+        "경제": 2
+      },
+      "short": false
+    },
+    {
+      "date": "2026-04-09",
+      "subturn": "AM",
+      "delivered": 5,
+      "by_bucket": {
+        "종목": 4,
+        "섹터": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-09",
+      "subturn": "PM",
+      "delivered": 9,
+      "by_bucket": {
+        "종목": 34,
+        "섹터": 4,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-10",
+      "subturn": "AM",
+      "delivered": 2,
+      "by_bucket": {
+        "종목": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-10",
+      "subturn": "PM",
+      "delivered": 9,
+      "by_bucket": {
+        "종목": 27,
+        "섹터": 2,
+        "경제": 5
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-11",
+      "subturn": "PM",
+      "delivered": 1,
+      "by_bucket": {
+        "종목": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-12",
+      "subturn": "PM",
+      "delivered": 7,
+      "by_bucket": {
+        "종목": 11,
+        "경제": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-13",
+      "subturn": "AM",
+      "delivered": 1,
+      "by_bucket": {
+        "종목": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-13",
+      "subturn": "PM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 24,
+        "섹터": 1,
+        "경제": 5
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-14",
+      "subturn": "PM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 49,
+        "섹터": 1,
+        "경제": 4
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-15",
+      "subturn": "AM",
+      "delivered": 2,
+      "by_bucket": {
+        "종목": 1,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-15",
+      "subturn": "PM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 34,
+        "섹터": 1,
+        "경제": 11
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-16",
+      "subturn": "AM",
+      "delivered": 3,
+      "by_bucket": {
+        "종목": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-16",
+      "subturn": "PM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 31,
+        "섹터": 1,
+        "경제": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-17",
+      "subturn": "AM",
+      "delivered": 1,
+      "by_bucket": {
+        "종목": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-17",
+      "subturn": "PM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 25,
+        "섹터": 1,
+        "경제": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-18",
+      "subturn": "AM",
+      "delivered": 2,
+      "by_bucket": {
+        "경제": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-19",
+      "subturn": "AM",
+      "delivered": 3,
+      "by_bucket": {
+        "종목": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-19",
+      "subturn": "PM",
+      "delivered": 6,
+      "by_bucket": {
+        "종목": 12,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-20",
+      "subturn": "AM",
+      "delivered": 1,
+      "by_bucket": {
+        "종목": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-20",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 35,
+        "섹터": 4,
+        "경제": 7
+      },
+      "short": false
+    },
+    {
+      "date": "2026-04-21",
+      "subturn": "AM",
+      "delivered": 2,
+      "by_bucket": {
+        "종목": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-21",
+      "subturn": "PM",
+      "delivered": 7,
+      "by_bucket": {
+        "종목": 33,
+        "경제": 6
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-22",
+      "subturn": "AM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 4
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-22",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 45,
+        "섹터": 5,
+        "경제": 6
+      },
+      "short": false
+    },
+    {
+      "date": "2026-04-23",
+      "subturn": "AM",
+      "delivered": 6,
+      "by_bucket": {
+        "종목": 5,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-23",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 30,
+        "섹터": 7,
+        "경제": 6
+      },
+      "short": false
+    },
+    {
+      "date": "2026-04-24",
+      "subturn": "AM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 4
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-24",
+      "subturn": "PM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 19,
+        "섹터": 2,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-25",
+      "subturn": "PM",
+      "delivered": 3,
+      "by_bucket": {
+        "종목": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-26",
+      "subturn": "AM",
+      "delivered": 1,
+      "by_bucket": {
+        "종목": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-26",
+      "subturn": "PM",
+      "delivered": 9,
+      "by_bucket": {
+        "종목": 20,
+        "섹터": 2,
+        "경제": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-27",
+      "subturn": "AM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 3,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-27",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 37,
+        "섹터": 4,
+        "경제": 2
+      },
+      "short": false
+    },
+    {
+      "date": "2026-04-28",
+      "subturn": "AM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 3,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-28",
+      "subturn": "PM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 36,
+        "섹터": 1,
+        "경제": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-29",
+      "subturn": "AM",
+      "delivered": 6,
+      "by_bucket": {
+        "종목": 5,
+        "섹터": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-29",
+      "subturn": "PM",
+      "delivered": 10,
+      "by_bucket": {
+        "종목": 25,
+        "섹터": 3,
+        "경제": 3
+      },
+      "short": false
+    },
+    {
+      "date": "2026-04-30",
+      "subturn": "AM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 2,
+        "경제": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-30",
+      "subturn": "PM",
+      "delivered": 9,
+      "by_bucket": {
+        "종목": 35,
+        "섹터": 2,
+        "경제": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-05-01",
+      "subturn": "PM",
+      "delivered": 5,
+      "by_bucket": {
+        "종목": 1,
+        "섹터": 3,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-05-02",
+      "subturn": "AM",
+      "delivered": 1,
+      "by_bucket": {
+        "종목": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-05-02",
+      "subturn": "PM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 4
+      },
+      "short": true
+    },
+    {
+      "date": "2026-05-03",
+      "subturn": "PM",
+      "delivered": 7,
+      "by_bucket": {
+        "종목": 17,
+        "경제": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-05-04",
+      "subturn": "AM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 4
+      },
+      "short": true
+    },
+    {
+      "date": "2026-05-04",
+      "subturn": "PM",
+      "delivered": 9,
+      "by_bucket": {
+        "종목": 39,
+        "섹터": 2,
+        "경제": 3
+      },
+      "short": true
+    }
+  ],
+  "short_events": [
+    {
+      "date": "2026-02-27",
+      "subturn": "AM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 3,
+        "섹터": 6,
+        "경제": 6
+      },
+      "short": true
+    },
+    {
+      "date": "2026-02-28",
+      "subturn": "AM",
+      "delivered": 3,
+      "by_bucket": {
+        "종목": 1,
+        "경제": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-02-28",
+      "subturn": "PM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 1,
+        "섹터": 1,
+        "경제": 4
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-01",
+      "subturn": "PM",
+      "delivered": 5,
+      "by_bucket": {
+        "섹터": 20,
+        "경제": 22
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-02",
+      "subturn": "AM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 1,
+        "섹터": 2,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-04",
+      "subturn": "AM",
+      "delivered": 7,
+      "by_bucket": {
+        "종목": 2,
+        "섹터": 9,
+        "경제": 5
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-05",
+      "subturn": "AM",
+      "delivered": 9,
+      "by_bucket": {
+        "종목": 4,
+        "섹터": 5,
+        "경제": 6
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-06",
+      "subturn": "AM",
+      "delivered": 5,
+      "by_bucket": {
+        "섹터": 3,
+        "경제": 9
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-07",
+      "subturn": "AM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 1,
+        "섹터": 1,
+        "경제": 4
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-08",
+      "subturn": "AM",
+      "delivered": 1,
+      "by_bucket": {
+        "종목": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-09",
+      "subturn": "AM",
+      "delivered": 6,
+      "by_bucket": {
+        "종목": 3,
+        "섹터": 1,
+        "경제": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-10",
+      "subturn": "AM",
+      "delivered": 7,
+      "by_bucket": {
+        "종목": 2,
+        "섹터": 3,
+        "경제": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-11",
+      "subturn": "AM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 4,
+        "섹터": 5,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-12",
+      "subturn": "AM",
+      "delivered": 9,
+      "by_bucket": {
+        "종목": 5,
+        "섹터": 2,
+        "경제": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-13",
+      "subturn": "AM",
+      "delivered": 7,
+      "by_bucket": {
+        "종목": 2,
+        "섹터": 5,
+        "경제": 10
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-14",
+      "subturn": "AM",
+      "delivered": 3,
+      "by_bucket": {
+        "종목": 1,
+        "경제": 11
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-14",
+      "subturn": "PM",
+      "delivered": 7,
+      "by_bucket": {
+        "종목": 4,
+        "섹터": 1,
+        "경제": 6
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-15",
+      "subturn": "AM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 2,
+        "경제": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-16",
+      "subturn": "AM",
+      "delivered": 7,
+      "by_bucket": {
+        "종목": 3,
+        "섹터": 2,
+        "경제": 5
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-17",
+      "subturn": "AM",
+      "delivered": 9,
+      "by_bucket": {
+        "종목": 4,
+        "섹터": 7,
+        "경제": 5
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-18",
+      "subturn": "AM",
+      "delivered": 6,
+      "by_bucket": {
+        "종목": 4,
+        "경제": 8
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-18",
+      "subturn": "PM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 42,
+        "섹터": 1,
+        "경제": 27
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-19",
+      "subturn": "AM",
+      "delivered": 5,
+      "by_bucket": {
+        "종목": 3,
+        "경제": 4
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-20",
+      "subturn": "AM",
+      "delivered": 3,
+      "by_bucket": {
+        "종목": 2,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-20",
+      "subturn": "PM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 23,
+        "섹터": 1,
+        "경제": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-21",
+      "subturn": "AM",
+      "delivered": 1,
+      "by_bucket": {
+        "종목": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-21",
+      "subturn": "PM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 2,
+        "경제": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-22",
+      "subturn": "AM",
+      "delivered": 1,
+      "by_bucket": {
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-23",
+      "subturn": "AM",
+      "delivered": 2,
+      "by_bucket": {
+        "경제": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-23",
+      "subturn": "PM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 24,
+        "섹터": 1,
+        "경제": 4
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-26",
+      "subturn": "AM",
+      "delivered": 2,
+      "by_bucket": {
+        "종목": 1,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-27",
+      "subturn": "AM",
+      "delivered": 2,
+      "by_bucket": {
+        "종목": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-27",
+      "subturn": "PM",
+      "delivered": 9,
+      "by_bucket": {
+        "종목": 27,
+        "섹터": 2,
+        "경제": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-28",
+      "subturn": "AM",
+      "delivered": 1,
+      "by_bucket": {
+        "종목": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-28",
+      "subturn": "PM",
+      "delivered": 3,
+      "by_bucket": {
+        "종목": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-29",
+      "subturn": "AM",
+      "delivered": 1,
+      "by_bucket": {
+        "종목": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-29",
+      "subturn": "PM",
+      "delivered": 7,
+      "by_bucket": {
+        "종목": 10,
+        "경제": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-30",
+      "subturn": "AM",
+      "delivered": 5,
+      "by_bucket": {
+        "종목": 4,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-30",
+      "subturn": "PM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 19,
+        "섹터": 1,
+        "경제": 5
+      },
+      "short": true
+    },
+    {
+      "date": "2026-03-31",
+      "subturn": "AM",
+      "delivered": 5,
+      "by_bucket": {
+        "종목": 4,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-01",
+      "subturn": "AM",
+      "delivered": 1,
+      "by_bucket": {
+        "섹터": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-01",
+      "subturn": "PM",
+      "delivered": 7,
+      "by_bucket": {
+        "종목": 2,
+        "섹터": 6,
+        "경제": 4
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-02",
+      "subturn": "AM",
+      "delivered": 3,
+      "by_bucket": {
+        "종목": 1,
+        "경제": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-02",
+      "subturn": "PM",
+      "delivered": 9,
+      "by_bucket": {
+        "종목": 33,
+        "섹터": 2,
+        "경제": 5
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-03",
+      "subturn": "AM",
+      "delivered": 5,
+      "by_bucket": {
+        "종목": 3,
+        "경제": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-03",
+      "subturn": "PM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 23,
+        "섹터": 1,
+        "경제": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-04",
+      "subturn": "AM",
+      "delivered": 2,
+      "by_bucket": {
+        "종목": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-04",
+      "subturn": "PM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 3,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-05",
+      "subturn": "AM",
+      "delivered": 1,
+      "by_bucket": {
+        "종목": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-05",
+      "subturn": "PM",
+      "delivered": 7,
+      "by_bucket": {
+        "종목": 13,
+        "경제": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-06",
+      "subturn": "AM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 3,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-06",
+      "subturn": "PM",
+      "delivered": 9,
+      "by_bucket": {
+        "종목": 25,
+        "섹터": 2,
+        "경제": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-07",
+      "subturn": "AM",
+      "delivered": 3,
+      "by_bucket": {
+        "종목": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-08",
+      "subturn": "AM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 3,
+        "섹터": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-09",
+      "subturn": "AM",
+      "delivered": 5,
+      "by_bucket": {
+        "종목": 4,
+        "섹터": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-09",
+      "subturn": "PM",
+      "delivered": 9,
+      "by_bucket": {
+        "종목": 34,
+        "섹터": 4,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-10",
+      "subturn": "AM",
+      "delivered": 2,
+      "by_bucket": {
+        "종목": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-10",
+      "subturn": "PM",
+      "delivered": 9,
+      "by_bucket": {
+        "종목": 27,
+        "섹터": 2,
+        "경제": 5
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-11",
+      "subturn": "PM",
+      "delivered": 1,
+      "by_bucket": {
+        "종목": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-12",
+      "subturn": "PM",
+      "delivered": 7,
+      "by_bucket": {
+        "종목": 11,
+        "경제": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-13",
+      "subturn": "AM",
+      "delivered": 1,
+      "by_bucket": {
+        "종목": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-13",
+      "subturn": "PM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 24,
+        "섹터": 1,
+        "경제": 5
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-14",
+      "subturn": "PM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 49,
+        "섹터": 1,
+        "경제": 4
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-15",
+      "subturn": "AM",
+      "delivered": 2,
+      "by_bucket": {
+        "종목": 1,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-15",
+      "subturn": "PM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 34,
+        "섹터": 1,
+        "경제": 11
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-16",
+      "subturn": "AM",
+      "delivered": 3,
+      "by_bucket": {
+        "종목": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-16",
+      "subturn": "PM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 31,
+        "섹터": 1,
+        "경제": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-17",
+      "subturn": "AM",
+      "delivered": 1,
+      "by_bucket": {
+        "종목": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-17",
+      "subturn": "PM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 25,
+        "섹터": 1,
+        "경제": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-18",
+      "subturn": "AM",
+      "delivered": 2,
+      "by_bucket": {
+        "경제": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-19",
+      "subturn": "AM",
+      "delivered": 3,
+      "by_bucket": {
+        "종목": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-19",
+      "subturn": "PM",
+      "delivered": 6,
+      "by_bucket": {
+        "종목": 12,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-20",
+      "subturn": "AM",
+      "delivered": 1,
+      "by_bucket": {
+        "종목": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-21",
+      "subturn": "AM",
+      "delivered": 2,
+      "by_bucket": {
+        "종목": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-21",
+      "subturn": "PM",
+      "delivered": 7,
+      "by_bucket": {
+        "종목": 33,
+        "경제": 6
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-22",
+      "subturn": "AM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 4
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-23",
+      "subturn": "AM",
+      "delivered": 6,
+      "by_bucket": {
+        "종목": 5,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-24",
+      "subturn": "AM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 4
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-24",
+      "subturn": "PM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 19,
+        "섹터": 2,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-25",
+      "subturn": "PM",
+      "delivered": 3,
+      "by_bucket": {
+        "종목": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-26",
+      "subturn": "AM",
+      "delivered": 1,
+      "by_bucket": {
+        "종목": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-26",
+      "subturn": "PM",
+      "delivered": 9,
+      "by_bucket": {
+        "종목": 20,
+        "섹터": 2,
+        "경제": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-27",
+      "subturn": "AM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 3,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-28",
+      "subturn": "AM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 3,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-28",
+      "subturn": "PM",
+      "delivered": 8,
+      "by_bucket": {
+        "종목": 36,
+        "섹터": 1,
+        "경제": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-29",
+      "subturn": "AM",
+      "delivered": 6,
+      "by_bucket": {
+        "종목": 5,
+        "섹터": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-30",
+      "subturn": "AM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 2,
+        "경제": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-04-30",
+      "subturn": "PM",
+      "delivered": 9,
+      "by_bucket": {
+        "종목": 35,
+        "섹터": 2,
+        "경제": 2
+      },
+      "short": true
+    },
+    {
+      "date": "2026-05-01",
+      "subturn": "PM",
+      "delivered": 5,
+      "by_bucket": {
+        "종목": 1,
+        "섹터": 3,
+        "경제": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-05-02",
+      "subturn": "AM",
+      "delivered": 1,
+      "by_bucket": {
+        "종목": 1
+      },
+      "short": true
+    },
+    {
+      "date": "2026-05-02",
+      "subturn": "PM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 4
+      },
+      "short": true
+    },
+    {
+      "date": "2026-05-03",
+      "subturn": "PM",
+      "delivered": 7,
+      "by_bucket": {
+        "종목": 17,
+        "경제": 3
+      },
+      "short": true
+    },
+    {
+      "date": "2026-05-04",
+      "subturn": "AM",
+      "delivered": 4,
+      "by_bucket": {
+        "종목": 4
+      },
+      "short": true
+    },
+    {
+      "date": "2026-05-04",
+      "subturn": "PM",
+      "delivered": 9,
+      "by_bucket": {
+        "종목": 39,
+        "섹터": 2,
+        "경제": 3
+      },
+      "short": true
+    }
+  ]
+}

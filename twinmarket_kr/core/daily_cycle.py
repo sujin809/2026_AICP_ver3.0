@@ -7,10 +7,20 @@ from typing import Any
 import config
 from twinmarket_kr.agents.fundamental_agent import FundamentalAgent
 from twinmarket_kr.agents.memory_agent import MemoryAgent
-from twinmarket_kr.agents.news_agent import NewsAgent
+from twinmarket_kr.agents.news_agent import (
+    AM_NEWS_WINDOW_END_TIME,
+    PM_NEWS_WINDOW_END_TIME,
+    NewsAgent,
+)
 from twinmarket_kr.community.thinking import community_thinking
 from twinmarket_kr.core.collect_context import collect_context
-from twinmarket_kr.llm.analysis import analyze_market, depth2_post_search, depth2_pre_search, interpret_news
+from twinmarket_kr.llm.analysis import (
+    DEPTH2_MAX_SEARCH_ARTICLES,
+    analyze_market,
+    depth2_post_search,
+    depth2_pre_search,
+    interpret_news,
+)
 from twinmarket_kr.llm.belief import update_belief
 from twinmarket_kr.llm.client import OpenRouterClient, stable_llm_seed
 from twinmarket_kr.llm.decision import build_trading_constraints, make_decision
@@ -100,9 +110,13 @@ async def run_agent_turn(
                 current_date=today_context["news_max_date"],
                 window_end_date=today_context.get("news_max_date"),
                 window_end_time=today_context.get("news_end_time")
-                or ("08:59" if subturn == "am" else config.MARKET_CLOSE_TIME),
+                or (
+                    AM_NEWS_WINDOW_END_TIME
+                    if subturn == "am"
+                    else PM_NEWS_WINDOW_END_TIME
+                ),
                 lookback_days=7,
-                top_n=10,
+                top_n=DEPTH2_MAX_SEARCH_ARTICLES,
             )
             post_search = await depth2_post_search(
                 agent,

@@ -9,6 +9,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
+from twinmarket_kr.agents.news_agent import (
+    AM_NEWS_WINDOW_END_TIME,
+    AM_NEWS_WINDOW_START_TIME,
+    PM_NEWS_WINDOW_END_TIME,
+    PM_NEWS_WINDOW_START_TIME,
+)
+
 
 def _truthy(value: Any) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "y"}
@@ -96,7 +103,7 @@ def validate_news_inputs(
     sim_db_path: Path | str,
     dates: list[str],
     fake_news_mode: str,
-    market_close_time: str,
+    market_close_time: str,  # noqa: ARG001 - 주문 마감 시각; 뉴스 윈도우는 news_agent 상수를 쓴다
 ) -> dict[str, Any]:
     """Audit feed identity, 10(+1) structure, and temporal eligibility before API calls."""
     processed = _read_csv(Path(processed_news_csv))
@@ -176,22 +183,30 @@ def validate_news_inputs(
     for day in dates:
         if day not in previous_by_date:
             raise RuntimeError(f"No prior trading date exists for news cutoff: {day}")
+        # 뉴스 윈도우는 news_agent의 선정 로직과 동일한 상수·양끝 포함 비교를 쓴다.
+        # 검증기가 독자적으로 경계를 계산하면 선정과 노출이 조용히 어긋날 수 있다.
         windows = (
             (
                 "am",
                 datetime.strptime(
-                    f"{previous_by_date[day]} {market_close_time}", "%Y-%m-%d %H:%M"
+                    f"{previous_by_date[day]} {AM_NEWS_WINDOW_START_TIME}", "%Y-%m-%d %H:%M"
                 ),
-                datetime.strptime(f"{day} 08:59", "%Y-%m-%d %H:%M"),
+                datetime.strptime(
+                    f"{day} {AM_NEWS_WINDOW_END_TIME}", "%Y-%m-%d %H:%M"
+                ),
             ),
             (
                 "pm",
-                datetime.strptime(f"{day} 08:59", "%Y-%m-%d %H:%M"),
-                datetime.strptime(f"{day} {market_close_time}", "%Y-%m-%d %H:%M"),
+                datetime.strptime(
+                    f"{day} {PM_NEWS_WINDOW_START_TIME}", "%Y-%m-%d %H:%M"
+                ),
+                datetime.strptime(
+                    f"{day} {PM_NEWS_WINDOW_END_TIME}", "%Y-%m-%d %H:%M"
+                ),
             ),
         )
         for subturn, start, end in windows:
-            slot_rows = [row for timestamp, row in rows_with_time if start < timestamp <= end]
+            slot_rows = [row for timestamp, row in rows_with_time if start <= timestamp <= end]
             fake_count = sum(is_fake(row) for row in slot_rows)
             real_count = len(slot_rows) - fake_count
             if real_count not in {9, 10}:

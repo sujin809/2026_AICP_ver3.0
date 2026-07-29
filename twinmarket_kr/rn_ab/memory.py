@@ -48,9 +48,17 @@ RN_AUXILIARY_STAGE_SCHEMA_VERSIONS = {
     "community_read_react": "rn-community-read-react-response-v1",
     "community_interpretation": "rn-community-interpretation-response-v2",
 }
+# Depth-2 키워드 탐색은 커뮤니티 스테이지가 아니다.  ``RN_AUXILIARY_...`` 는
+# 여러 곳에서 "커뮤니티 호출 집합"으로 쓰이므로(예: RN_COMM_OFF에 존재하면
+# 실패시키는 memory.py 의 검사, community_artifacts 의 stage 집합) 여기에 섞으면
+# OFF arm 이 정상인데도 커뮤니티 호출로 오인된다.  별도 상수로 둔다.
+RN_DEPTH2_STAGE_SCHEMA_VERSIONS = {
+    "news_pre_search": "rn-news-pre-search-v1",
+}
 RN_ALL_JOURNALED_STAGE_SCHEMA_VERSIONS = {
     **RN_STAGE_SCHEMA_VERSIONS,
     **RN_AUXILIARY_STAGE_SCHEMA_VERSIONS,
+    **RN_DEPTH2_STAGE_SCHEMA_VERSIONS,
 }
 
 HUMAN_LOG_RENDERER_VERSION = "rn-human-log-v1"
@@ -3592,32 +3600,49 @@ class PaperMemoryStore:
                     "Sealed Depth-2 search registry does not cover this event exactly once"
                 )
             row = matches[0]
-            ids = row.get("result_article_ids")
-            hashes = row.get("result_payload_sha256s")
+            ids = row.get("candidate_article_ids")
+            hashes = row.get("candidate_payload_sha256s")
+            max_selected = self.depth2_search_registry.get("max_selected")
             if (
                 not isinstance(ids, list)
                 or not isinstance(hashes, list)
                 or len(ids) != len(hashes)
+                or not isinstance(max_selected, int)
+                or isinstance(max_selected, bool)
+                or max_selected < 0
             ):
-                raise PaperMemoryError("Sealed Depth-2 search identity/hash rows are invalid")
-            projected: list[dict[str, str]] = []
+                raise PaperMemoryError("Sealed Depth-2 candidate identity/hash rows are invalid")
+            pool: list[dict[str, str]] = []
             for article_id, expected_hash in zip(ids, hashes, strict=True):
                 try:
                     article = self.news_registry.articles[article_id]
                 except KeyError as exc:
                     raise PaperMemoryError(
-                        "Depth-2 search article is absent from sealed clean news"
+                        "Depth-2 candidate is absent from sealed clean news"
                     ) from exc
                 if article.payload_sha256 != expected_hash:
                     raise PaperMemoryError(
-                        "Depth-2 search article hash differs from sealed clean news"
+                        "Depth-2 candidate hash differs from sealed clean news"
                     )
-                projected.append(dict(article.stage_projection(news_depth=2)))
-            normalized_search = tuple(projected)
-            if list(normalized_search) != raw_depth2_search:
+                pool.append(dict(article.stage_projection(news_depth=2)))
+            # 무엇을 읽었는지는 에이전트의 키워드가 정하므로 여기서 정확한 목록을
+            # 재현할 수는 없다.  이 경계가 지킬 수 있는 것은 "봉인된 풀 밖의 기사를
+            # 끼워 넣지 못한다"와 "상한을 넘지 못한다"이며, 어떤 키워드가 이 선택을
+            # 만들었는지는 저널된 news_pre_search 응답이 증거로 남긴다.
+            if len(raw_depth2_search) > max_selected:
                 raise PaperMemoryError(
-                    "STB Depth-2 search results differ from the generated registry"
+                    "STB Depth-2 search results exceed the sealed per-event selection cap"
                 )
+            seen: list[Mapping[str, Any]] = []
+            for item in raw_depth2_search:
+                if item not in pool:
+                    raise PaperMemoryError(
+                        "STB Depth-2 search result is not in the sealed candidate pool"
+                    )
+                if item in seen:
+                    raise PaperMemoryError("STB Depth-2 search results repeat an article")
+                seen.append(item)
+            normalized_search = tuple(dict(item) for item in raw_depth2_search)
 
         normalized_claims = tuple(
             self._community_claim_stage_projection(

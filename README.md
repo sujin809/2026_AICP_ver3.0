@@ -49,7 +49,7 @@ python scripts/00_fetch_market_data.py
 python scripts/01_build_persona.py
 python scripts/02_prepare_news.py --seed 2
 python scripts/03_load_stock_data.py
-python scripts/02_init_memory.py
+python scripts/02a_init_memory.py
 python scripts/04_generate_initial_beliefs.py --offline
 python scripts/99_validate.py
 ```
@@ -120,6 +120,67 @@ python scripts/05_run_simulation.py \
 ```
 
 `fake-news-mode=on`일 때만 `is_fake=true` 행이 기본 뉴스, 본문 읽기, Depth 2 검색 후보에 들어갑니다. 에이전트가 읽는 입력에서는 fake 관련 메타데이터를 제거합니다.
+
+## RealNews Community A/B 실험
+
+삼성전자(`005930`)의 커뮤니티 토론 기능이 투자자 의사결정에 미치는 영향을 측정하는 A/B 실험입니다. 100명 에이전트를 두 그룹으로 나누어 커뮤니티 on/off 조건에서 45거래일간 실행합니다.
+
+### 준비 단계
+
+실험 설정 및 입력 검증을 수행합니다.
+
+```bash
+python scripts/09_run_realnews_community_ab.py preflight \
+  --study-seed 2 --max-agents 100 \
+  --start-date 2026-02-27 --end-date 2026-05-04
+```
+
+주요 입력:
+- **뉴스 splits** (`outputs/*_split/`): 필터링 여부 "N" 기사만 사용
+  - `samsung_split/`: 삼성전자 뉴스 (키워드 검색)
+  - `semiconductor_split/`: 반도체 산업 뉴스
+  - `macro_economic-policy_split/`, `macro_trade_split/`, `macro_business-index_split/`: 거시경제 뉴스
+- **페르소나 스냅샷** (`preparation/rn_ab_persona_snapshot_v1/`): 100명 에이전트 속성 및 초기 beliefs
+
+### 실행 단계
+
+**1️⃣ P1 Canary (2거래일, 샘플 실행)**
+
+실제 LLM 호출을 통해 토큰/비용 추정 및 reasoning-off 설정 검증:
+
+```bash
+python scripts/12_operate_realnews_community_ab.py \
+  prepare-telemetry --study-seed 2 --max-agents 100
+
+python scripts/12_operate_realnews_community_ab.py run-p1 \
+  --authorize-paid-api-calls --confirm-run-id <RUN_ID>
+```
+
+**2️⃣ 본 실행 (45거래일, 전체 데이터)**
+
+P1 검증 후 전체 실험 실행:
+
+```bash
+python scripts/12_operate_realnews_community_ab.py run \
+  --p1-run-dir outputs/logs/<P1_RUN_ID> \
+  --authorize-paid-api-calls --confirm-run-id <RUN_ID>
+```
+
+### 입출력 구조
+
+| 단계 | 입력 | 출력 |
+|------|------|------|
+| preflight | 페르소나 snapshot, 뉴스 splits | 검증 리포트, run registry |
+| P1 canary | study_spec.json, sealed inputs | 2일 시뮬레이션 로그, 토큰 통계 |
+| 본 실행 | P1 결과 + 나머지 43일 | 45일 전체 로그, 커뮤니티 보드, 거래 내역 |
+| 분석 | 실행 로그 | A/B 비교 리포트, 통계 분석 |
+
+주요 옵션:
+- `--study-seed`: 재현 가능한 난수 시드 (기본값 2)
+- `--max-agents`: 에이전트 수 (100)
+- `--start-date`, `--end-date`: 실험 기간 (2026-02-27 ~ 2026-05-04)
+- `--authorize-paid-api-calls`: 유료 API 호출 활성화 (반드시 수동 승인)
+- `--confirm-run-id`: run_id 확인 (실수 방지)
 
 ## 로그·리포트·검증
 

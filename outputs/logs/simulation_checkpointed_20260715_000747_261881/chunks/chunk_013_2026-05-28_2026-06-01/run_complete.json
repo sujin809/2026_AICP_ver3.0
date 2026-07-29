@@ -1,8 +1,0 @@
-{
-  "run_id": "chunk_013_2026-05-28_2026-06-01",
-  "agent_count": 30,
-  "date_count": 3,
-  "information_mode": "pre_close_cutoff",
-  "decision_space": "buy_sell_only",
-  "log_dir": "/Users/leeyujeong/Downloads/MD_File/twinmarket_kr_project/outputs/logs/simulation_checkpointed_20260715_000747_261881/chunks/chunk_013_2026-05-28_2026-06-01"
-}

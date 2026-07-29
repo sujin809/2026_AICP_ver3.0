@@ -34,7 +34,7 @@ class PreflightInputError(RuntimeError):
     """Generated preparation inputs differ from their sealed source contract."""
 
 
-DEPTH2_REGISTRY_VERSION = "rn-depth2-recent-search-v1"
+DEPTH2_REGISTRY_VERSION = "rn-depth2-candidate-pool-v2"
 PUBLIC_PROFILE_REGISTRY_VERSION = "rn-public-author-profile-registry-v1"
 COMMUNITY_TRUTH_POLICY_VERSION = "rn-community-post-truth-policy-v1"
 GENERATION_MANIFEST_VERSION = "rn-generated-preflight-inputs-v1"
@@ -45,9 +45,12 @@ TRUTH_POLICY_FILENAME = "community_post_truth_policy.json"
 GENERATION_MANIFEST_FILENAME = "generated_input_manifest.json"
 
 _LOOKBACK_DAYS = 7
-_SEARCH_TOP_K = 10
+# 에이전트가 자기 키워드로 고를 수 있는 기사 수의 상한. 후보 풀 자체는 자르지
+# 않는다: 봉인되는 것은 "무엇을 검색할 수 있었는가"(풀)이고, 그 중 무엇을 실제로
+# 읽는지는 에이전트의 키워드가 정한다.
+_SEARCH_MAX_SELECTED = 5
 _SEARCH_SELECTION_POLICY = (
-    "reviewed-clean-news-prior-event-only_then-published-desc_article-id-v1"
+    "reviewed-clean-news-prior-event-only_agent-keyword-scored-title-x2-plus-summary_top-5-v2"
 )
 _PROFILE_GENERATION_POLICY = "uniform-neutral-no-private-runtime-state-v1"
 _PUBLIC_PROFILE = {
@@ -107,7 +110,7 @@ _DEPTH2_FIELDS = frozenset(
         "stage_input_registry_sha256",
         "real_news_bundle_sha256",
         "lookback_days",
-        "top_k",
+        "max_selected",
         "selection_policy",
         "events",
         "registry_sha256",
@@ -119,8 +122,8 @@ _DEPTH2_EVENT_FIELDS = frozenset(
         "cutoff_timestamp",
         "window_start_timestamp",
         "excluded_current_event_article_ids",
-        "result_article_ids",
-        "result_payload_sha256s",
+        "candidate_article_ids",
+        "candidate_payload_sha256s",
     }
 )
 _PROFILE_FIELDS = frozenset(
@@ -177,14 +180,7 @@ class GeneratedPreflightInputs:
             for row in self.public_profile_registry["profiles"]
         }
 
-    def depth2_search_results(
-        self,
-        *,
-        event_id: str,
-        news: Any,
-    ) -> tuple[dict[str, str], ...]:
-        """Return the exact full-text-safe projection pinned for one event."""
-
+    def _depth2_event_row(self, event_id: str) -> Mapping[str, Any]:
         matches = [
             row for row in self.depth2_registry["events"] if row["event_id"] == event_id
         ]
@@ -192,23 +188,90 @@ class GeneratedPreflightInputs:
             raise PreflightInputError(
                 f"Depth-2 registry does not contain exactly one event row: {event_id}"
             )
-        row = matches[0]
-        ids = row["result_article_ids"]
-        hashes = row["result_payload_sha256s"]
-        results: list[dict[str, str]] = []
+        return matches[0]
+
+    def depth2_candidate_pool(
+        self,
+        *,
+        event_id: str,
+        news: Any,
+    ) -> tuple[tuple[str, dict[str, str]], ...]:
+        """Return the sealed searchable pool for one event, in sealed order.
+
+        The pool is what the agent *could* have searched.  Which of it the agent
+        actually reads is decided by its own keywords in
+        :meth:`depth2_select_by_keywords`; this method never truncates.
+        """
+
+        row = self._depth2_event_row(event_id)
+        ids = row["candidate_article_ids"]
+        hashes = row["candidate_payload_sha256s"]
+        pool: list[tuple[str, dict[str, str]]] = []
         for article_id, expected_hash in zip(ids, hashes, strict=True):
             try:
                 article = news.articles[article_id]
             except (AttributeError, KeyError) as exc:
                 raise PreflightInputError(
-                    f"Depth-2 registry article is absent from sealed clean news: {article_id}"
+                    f"Depth-2 candidate is absent from sealed clean news: {article_id}"
                 ) from exc
             if article.payload_sha256 != expected_hash:
                 raise PreflightInputError(
-                    f"Depth-2 registry payload hash differs for {article_id}"
+                    f"Depth-2 candidate payload hash differs for {article_id}"
                 )
-            results.append(dict(article.stage_projection(news_depth=2)))
-        return tuple(results)
+            pool.append((article_id, dict(article.stage_projection(news_depth=2))))
+        return tuple(pool)
+
+    def depth2_select_recent(
+        self,
+        *,
+        event_id: str,
+        news: Any,
+    ) -> tuple[dict[str, str], ...]:
+        """INTERIM: take the most recent ``max_selected`` of the sealed pool.
+
+        This is the pre-canary stand-in for agent keyword search.  It is
+        deterministic and needs no model call, so the evidence provider stays
+        ``local_only`` / ``paid_api_calls = 0``.  Every D2 agent therefore sees
+        the same articles at a given event -- that is exactly the limitation
+        :meth:`depth2_select_by_keywords` exists to remove once the scheduler
+        gains a paid Depth-2 keyword phase.
+        """
+
+        pool = self.depth2_candidate_pool(event_id=event_id, news=news)
+        return tuple(projection for _article_id, projection in pool[:_SEARCH_MAX_SELECTED])
+
+    def depth2_select_by_keywords(
+        self,
+        *,
+        event_id: str,
+        news: Any,
+        keywords: Sequence[str],
+    ) -> tuple[dict[str, str], ...]:
+        """Pick at most ``max_selected`` sealed-pool articles for one agent's keywords.
+
+        Scoring mirrors the legacy Depth-2 search so both paths mean the same
+        thing by "keyword match": a title hit counts double a summary hit.  Ties
+        break on the sealed pool order, so the result is fully reproducible from
+        the sealed registry plus the journaled keyword response.  No keywords
+        means no extra reading, which is a real agent choice, not an error.
+        """
+
+        normalized = [str(word).strip() for word in keywords if str(word).strip()]
+        if not normalized:
+            return ()
+        scored: list[tuple[float, int, dict[str, str]]] = []
+        for order, (_article_id, projection) in enumerate(
+            self.depth2_candidate_pool(event_id=event_id, news=news)
+        ):
+            title = str(projection.get("title", ""))
+            summary = str(projection.get("summary", ""))
+            score = sum(title.count(word) for word in normalized) * 2.0 + sum(
+                summary.count(word) for word in normalized
+            )
+            if score > 0:
+                scored.append((score, order, projection))
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        return tuple(item[2] for item in scored[:_SEARCH_MAX_SELECTED])
 
 
 def build_generated_preflight_inputs(
@@ -344,27 +407,28 @@ def _build_depth2_registry(*, resolved: Any, stage_inputs: Any, news: Any) -> di
             if published < window_start or published > cutoff or observed > cutoff:
                 continue
             candidates.append((published, article.article_id, article.payload_sha256))
+        # 풀은 자르지 않는다. 정렬만 결정론적으로 고정해 두면 같은 봉인 입력에서
+        # 항상 같은 후보 순서가 나오고, 키워드 점수 동률도 이 순서로 깨진다.
         candidates.sort(key=lambda item: (-item[0].timestamp(), item[1]))
-        selected = candidates[:_SEARCH_TOP_K]
         rows.append(
             {
                 "event_id": event_id,
                 "cutoff_timestamp": cutoff.isoformat(),
                 "window_start_timestamp": window_start.isoformat(),
                 "excluded_current_event_article_ids": list(current_ids),
-                "result_article_ids": [item[1] for item in selected],
-                "result_payload_sha256s": [item[2] for item in selected],
+                "candidate_article_ids": [item[1] for item in candidates],
+                "candidate_payload_sha256s": [item[2] for item in candidates],
             }
         )
     payload = {
-        "artifact_type": "rn_depth2_recent_search_registry",
+        "artifact_type": "rn_depth2_candidate_pool_registry",
         "version": DEPTH2_REGISTRY_VERSION,
         "study_id": resolved.spec.study_id,
         "calendar_event_registry_sha256": resolved.calendar.canonical_sha256,
         "stage_input_registry_sha256": stage_inputs.canonical_sha256,
         "real_news_bundle_sha256": news.bundle_sha256,
         "lookback_days": _LOOKBACK_DAYS,
-        "top_k": _SEARCH_TOP_K,
+        "max_selected": _SEARCH_MAX_SELECTED,
         "selection_policy": _SEARCH_SELECTION_POLICY,
         "events": rows,
     }
@@ -459,14 +523,14 @@ def _validate_depth2_registry(
 ) -> None:
     data = _exact(value, _DEPTH2_FIELDS, "Depth-2 registry")
     if (
-        data["artifact_type"] != "rn_depth2_recent_search_registry"
+        data["artifact_type"] != "rn_depth2_candidate_pool_registry"
         or data["version"] != DEPTH2_REGISTRY_VERSION
         or data["study_id"] != resolved.spec.study_id
         or data["calendar_event_registry_sha256"] != resolved.calendar.canonical_sha256
         or data["stage_input_registry_sha256"] != stage_inputs.canonical_sha256
         or data["real_news_bundle_sha256"] != news.bundle_sha256
         or data["lookback_days"] != _LOOKBACK_DAYS
-        or data["top_k"] != _SEARCH_TOP_K
+        or data["max_selected"] != _SEARCH_MAX_SELECTED
         or data["selection_policy"] != _SEARCH_SELECTION_POLICY
     ):
         raise PreflightInputError("Depth-2 registry source/policy binding is invalid")
@@ -479,13 +543,14 @@ def _validate_depth2_registry(
         raise PreflightInputError("Depth-2 registry events must be an ordered array")
     for index, row in enumerate(events):
         parsed = _exact(row, _DEPTH2_EVENT_FIELDS, f"Depth-2 event[{index}]")
-        ids = parsed["result_article_ids"]
-        hashes = parsed["result_payload_sha256s"]
+        ids = parsed["candidate_article_ids"]
+        hashes = parsed["candidate_payload_sha256s"]
         excluded = parsed["excluded_current_event_article_ids"]
         if not all(isinstance(item, str) and item for item in ids + hashes + excluded):
             raise PreflightInputError("Depth-2 registry contains an invalid article identity")
-        if len(ids) != len(hashes) or len(ids) != len(set(ids)) or len(ids) > _SEARCH_TOP_K:
-            raise PreflightInputError("Depth-2 registry result identity/hash arrays are invalid")
+        # 후보 풀에는 상한이 없다. 상한은 에이전트가 고르는 단계에서만 적용된다.
+        if len(ids) != len(hashes) or len(ids) != len(set(ids)):
+            raise PreflightInputError("Depth-2 candidate identity/hash arrays are invalid")
         if set(ids) & set(excluded):
             raise PreflightInputError("Depth-2 registry repeats a current-event article")
 

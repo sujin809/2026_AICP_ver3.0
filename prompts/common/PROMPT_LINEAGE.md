@@ -9,7 +9,7 @@
 | `community_reading.txt` | `../community_reading.txt` | 기존 골격을 유지하고 RN string post ID·공개 프로필 privacy 문장만 수정 |
 | `community_thinking.txt` | `../community_thinking.txt` | 기존 해석 골격을 유지하고 title-only/full-body 경계와 exact supporting quote를 가진 next-AM claim JSON 계약으로 수정 |
 | `initial_belief.txt` | `../initial_belief.txt` | 바이트 단위 동일 복사 |
-| `news_agent_pre_search.txt` | `../news_agent_pre_search.txt` | 바이트 단위 동일 복사 |
+| `news_agent_pre_search.txt` | `../news_agent_pre_search.txt` | 2026-07-28 확정된 D2 설계 변경에 따라 검색 키워드 상한만 `3~8개` → `0~5개`로 수정. 0개는 "이번 턴에는 검색하지 않는다"는 유효한 판단이며, 값은 `news_agent.DEPTH2_MAX_KEYWORDS`와 공유한다 |
 | `news_agent_post_search.txt` | `../news_agent_post_search.txt` | 바이트 단위 동일 복사 |
 | `news_interpretation.txt` | `../news_interpretation.txt` | 바이트 단위 동일 복사 |
 | `posting_decision.txt` | `../posting_decision.txt` | 기존 골격과 게시/미게시 conditional JSON을 유지하되, 입력은 현재 post-fill LTB 6차원·결정론적 view change·실제 PM 체결로 제한하고 JSON 예시를 strict하게 수정 |
@@ -29,6 +29,10 @@
   visible source ownership, title-only/full-body 노출 수준, exact quote provenance,
   privacy만 검사하며 `claim_text`와 인용문의 의미적 함의나 진실성을 판정하지 않는다.
 - 기존 `belief_summary`는 모델 prompt/response에서 제외한다. `view_change`는 LTB commit 뒤 서버가 결정론적으로 만든 projection만 게시 여부 판단 입력으로 허용하며, 모델 출력이나 다음 거래의 분석·결정 입력으로는 허용하지 않는다.
+- `news_agent_pre_search`는 0720 원문 계승 대상에서 빠졌다. RN이 D2 검색을 서버
+  결정론적 registry로 대체하던 설계가 2026-07-28에 agent 키워드 검색으로 바뀌면서
+  이 프롬프트가 실제 실행 역할이 되었기 때문이다. 상한 값은 코드 상수와 한 곳에서
+  관리하며, 프롬프트 문구만 바꾸고 코드 상수를 두면 조용히 어긋난다.
 - 11개 파일은 core/support 구분과 무관하게 하나의 bundle v2 canonical hash와 run-local manifest로 자동 봉인한다. 사용자가 hash를 수동 계산하거나 입력하지 않는다.
 - 실제 호출은 core 4단계와 조건부 community posting/select/reaction/next-AM interpretation이다. `initial_belief`는 deterministic LTB0가, 기존 news pre/post/interpretation helper는 sealed D2 registry와 current-only STB가 대체하므로 추가 LLM call을 만들지 않는다. 이 runtime-use 상태도 bundle manifest에 기록한다.
 

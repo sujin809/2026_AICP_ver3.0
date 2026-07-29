@@ -3,6 +3,10 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
+from twinmarket_kr.agents.news_agent import (
+    DEPTH2_MAX_KEYWORDS,
+    DEPTH2_MAX_SEARCH_ARTICLES,
+)
 from twinmarket_kr.llm.belief import load_prompt
 from twinmarket_kr.llm.client import OpenRouterClient, response_content, stable_llm_seed
 from twinmarket_kr.llm.validation import (
@@ -60,7 +64,7 @@ DEPTH2_PRE_SEARCH_SCHEMA = """
   "key_findings": ["비어 있지 않은 문자열", "..."],
   "curiosity_points": ["비어 있지 않은 문자열", "..."],
   "search_rationale": "비어 있지 않은 문자열",
-  "search_keywords": ["3~8개의 검색 키워드", "...", "..."]
+  "search_keywords": ["0~5개의 검색 키워드", "...", "..."]
 }
 """
 
@@ -171,7 +175,7 @@ def normalize_depth2_pre_search(value: dict[str, Any]) -> dict[str, Any]:
     if isinstance(normalized.get("search_keywords"), list) and all(
         isinstance(item, str) for item in normalized["search_keywords"]
     ):
-        normalized["search_keywords"] = normalized["search_keywords"][:8]
+        normalized["search_keywords"] = normalized["search_keywords"][:DEPTH2_MAX_KEYWORDS]
     return normalized
 
 
@@ -185,8 +189,9 @@ def validate_depth2_pre_search(value: dict[str, Any]) -> list[str]:
     ].strip():
         errors.append("search_rationale:requires_nonempty_string")
     keywords = value.get("search_keywords")
-    if not valid_string_list(keywords, allow_empty=False) or not 3 <= len(keywords) <= 8:
-        errors.append("search_keywords:requires_3_to_8_strings")
+    # 0개는 "이번 턴에는 추가 검색을 하지 않겠다"는 유효한 판단이다.
+    if not valid_string_list(keywords, allow_empty=True) or len(keywords) > DEPTH2_MAX_KEYWORDS:
+        errors.append(f"search_keywords:requires_0_to_{DEPTH2_MAX_KEYWORDS}_strings")
     return errors
 
 

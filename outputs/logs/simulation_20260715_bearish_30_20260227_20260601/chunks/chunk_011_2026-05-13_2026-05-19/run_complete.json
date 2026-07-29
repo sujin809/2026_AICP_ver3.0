@@ -1,8 +1,0 @@
-{
-  "run_id": "chunk_011_2026-05-13_2026-05-19",
-  "agent_count": 30,
-  "date_count": 5,
-  "information_mode": "pre_close_cutoff",
-  "decision_space": "buy_sell_only",
-  "log_dir": "/Users/leeyujeong/Downloads/MD_File/twinmarket_kr_project/outputs/logs/simulation_20260715_bearish_30_20260227_20260601/chunks/chunk_011_2026-05-13_2026-05-19"
-}

@@ -1,0 +1,136 @@
+{
+  "artifact_type": "rn_ab_reasoning_off_telemetry_plan",
+  "call_policy": {
+    "allow_fallbacks": false,
+    "concurrency": 8,
+    "final_request_policy": {
+      "provider": {
+        "allow_fallbacks": false,
+        "only": [
+          "alibaba"
+        ],
+        "order": [
+          "alibaba"
+        ],
+        "require_parameters": true
+      },
+      "reasoning": {
+        "effort": "none",
+        "exclude": true
+      }
+    },
+    "max_retries": 1,
+    "model": "qwen/qwen3.5-flash-02-23",
+    "provider": "alibaba",
+    "reasoning_effort": "none",
+    "reasoning_exclude": true,
+    "require_parameters": true,
+    "response_format": {
+      "type": "json_object"
+    },
+    "temperature": 0.2
+  },
+  "canary_scope": {
+    "agent_count": 100,
+    "agent_ids_sha256": "74437f8781259f142d5801f02fccf53fa01d4b14d0538da11f1542040ac38a1d",
+    "classification": "reasoning_off_telemetry_only_not_final_two_trading_day_p1_canary",
+    "conditions": [
+      "RN_COMM_OFF",
+      "RN_COMM_ON"
+    ],
+    "decision_date": "2026-02-27",
+    "decision_event_id": "2026-02-27/AM",
+    "decision_turn": 1,
+    "expected_logical_call_ids_sha256_by_condition": {
+      "RN_COMM_OFF": "4440df3c423d5642caa08e9054d3bfe2ad9e914e9daa90013ff6ae6a0ac21f7b",
+      "RN_COMM_ON": "389762e2b06c9326f62b81a940b231a0219a776192582934e485f77d6f51b1c0"
+    },
+    "expected_logical_calls_per_condition": 400,
+    "expected_physical_http_requests": 800,
+    "model_stages": [
+      "stb",
+      "analysis",
+      "decision",
+      "post_fill_ltb"
+    ],
+    "stage_max_tokens": {
+      "analysis": 3072,
+      "decision": 1024,
+      "post_fill_ltb": 3072,
+      "stb": 3072
+    },
+    "stage_schema_versions": {
+      "analysis": "rn-analysis-v3",
+      "decision": "rn-decision-v3",
+      "post_fill_ltb": "rn-post-fill-ltb-v4",
+      "stb": "rn-stb-v4"
+    }
+  },
+  "execution_authorized": false,
+  "expected_audit": {
+    "exact_row_fields": [
+      "accepted_response_sha256",
+      "attempt",
+      "audit_context",
+      "audit_event",
+      "error",
+      "error_type",
+      "finish_reason",
+      "label",
+      "latency_seconds",
+      "logical_call_id",
+      "max_tokens",
+      "phase_attempt_id",
+      "pid",
+      "prompt_sha256",
+      "provider",
+      "provider_attempt_sha256",
+      "provider_canonical_json_sha256",
+      "provider_response_sha256",
+      "reasoning_tokens",
+      "request_id",
+      "request_policy",
+      "request_policy_sha256",
+      "requested_model",
+      "response_format",
+      "response_reasoning_present",
+      "returned_model",
+      "seed",
+      "status",
+      "temperature",
+      "timestamp_utc",
+      "usage"
+    ],
+    "format": "append_only_provider_attempt_and_experiment_acceptance_events",
+    "paths": {
+      "RN_COMM_OFF": "RN_COMM_OFF/openrouter_attempts.jsonl",
+      "RN_COMM_ON": "RN_COMM_ON/openrouter_attempts.jsonl"
+    },
+    "success_contract": {
+      "acceptance_status": "accepted",
+      "accepted_response_sha256_exactly_bound_to_provider_attempt": true,
+      "finish_reason": "stop",
+      "one_acceptance_per_expected_logical_call": true,
+      "provider_request_id_required": true,
+      "provider_status": "provider_returned",
+      "reasoning_tokens": 0,
+      "requested_and_returned_model_equal_sealed_model": true,
+      "response_reasoning_present": false,
+      "returned_provider_equal_sealed_provider": true,
+      "structured_usage_required": true
+    }
+  },
+  "mode": "plan_only_no_network_no_paid_api",
+  "prompt_bundle_sha256": "c84982aad964fb2b17153b41a2b7cf8866bc4923c51148f7b450b6758ff50085",
+  "readiness": {
+    "blocking_requirement": "real_paid_live_canary_must_be_run_separately",
+    "does_not_satisfy": "final_P1_two_trading_day_U4_100_agent_community_boundary_canary",
+    "network_requests_made_by_plan": 0,
+    "paid_api_calls_made_by_plan": 0,
+    "status": "NO_GO_LIVE_TELEMETRY_MISSING"
+  },
+  "resolved_manifest_sha256": "0919f0c2782f16ebd23aba4f9b20766f037bd84314100a9108f0c8c4b0b773ec",
+  "run_id": "rn_seal_test",
+  "source_snapshot_sha256": "4472a9ae8cb67dffdfab96a588bc3674f6b36dc01d602e56530d38f1eb434d77",
+  "version": "rn-reasoning-off-telemetry-plan-v2"
+}

@@ -1,1 +1,0 @@
-{"run_id": "chunk_010_2026-04-30_2026-05-08", "event": "agent_error", "date": "2026-04-30", "turn": 2, "agent_id": "A027", "error_type": "RuntimeError", "error": "OpenRouter chat failed after retries: "}

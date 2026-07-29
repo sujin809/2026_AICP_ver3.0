@@ -426,9 +426,16 @@ class RNPreflightBundleTests(unittest.TestCase):
             self.assertNotIn("private_belief", profile)
         for row in generated.depth2_registry["events"]:
             self.assertFalse(
-                set(row["result_article_ids"]) & set(row["excluded_current_event_article_ids"])
+                set(row["candidate_article_ids"]) & set(row["excluded_current_event_article_ids"])
             )
-            self.assertLessEqual(len(row["result_article_ids"]), 10)
+            # 후보 풀 자체에는 상한이 없다. 상한은 에이전트 선택 단계에만 걸린다.
+            self.assertEqual(
+                len(row["candidate_article_ids"]), len(row["candidate_payload_sha256s"])
+            )
+            self.assertEqual(
+                len(set(row["candidate_article_ids"])), len(row["candidate_article_ids"])
+            )
+        self.assertEqual(generated.depth2_registry["max_selected"], 5)
         d2_agent = next(
             member.agent_id
             for member in context.resolved.cohort.members
@@ -444,6 +451,19 @@ class RNPreflightBundleTests(unittest.TestCase):
             )
         )
         self.assertTrue(packet.depth2_search_results)
+        # 에이전트가 실제로 읽는 추가 기사는 봉인된 선택 상한을 넘지 못한다.
+        self.assertLessEqual(
+            len(packet.depth2_search_results), generated.depth2_registry["max_selected"]
+        )
+        pool_ids = {
+            article_id
+            for article_id, _projection in generated.depth2_candidate_pool(
+                event_id=later_event, news=context.news_registry
+            )
+        }
+        self.assertTrue(
+            {item["article_id"] for item in packet.depth2_search_results} <= pool_ids
+        )
         self.assertFalse(
             {item["article_id"] for item in packet.news}
             & {item["article_id"] for item in packet.depth2_search_results}
