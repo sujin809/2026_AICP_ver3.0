@@ -19,13 +19,11 @@
   },
   "news_depth": {
     "1": 55,
-    "0": 15,
-    "2": 30
+    "0": 30,
+    "2": 15
   },
   "distribution_pass": true,
   "prompt_errors": [],
-  "young_male_avg_turnover": 1.9,
-  "senior_avg_turnover": 1.792,
   "segment_avg_scores": {
     "female_20대_일반": 12.6,
     "female_30대_일반": 11.5,

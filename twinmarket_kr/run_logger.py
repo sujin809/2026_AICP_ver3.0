@@ -5,11 +5,43 @@ import json
 import os
 import shutil
 import threading
+from collections import Counter
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import config
+
+
+LINEAGE_FIELDS = (
+    "source_ltb_id",
+    "source_stb_id",
+    "analysis_id",
+    "decision_id",
+    "fill_id",
+    "post_fill_ltb_id",
+)
+
+
+def _lineage_values(*sources: Mapping[str, Any] | None) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for source in sources:
+        if not source:
+            continue
+        for field in LINEAGE_FIELDS:
+            raw = source.get(field)
+            if raw is None or raw == "":
+                continue
+            value = str(raw)
+            prior = values.get(field)
+            if prior is not None and prior != value:
+                raise ValueError(
+                    f"logger lineage conflict for {field}: "
+                    f"{prior!r} != {value!r}"
+                )
+            values[field] = value
+    return values
 
 
 class SimulationLogger:
@@ -30,9 +62,12 @@ class SimulationLogger:
         root.mkdir(parents=True, exist_ok=True)
         self.run_dir = root / self.run_id
         if self.run_dir.exists() and not append_existing:
-            shutil.rmtree(self.run_dir)
+            raise FileExistsError(
+                f"Run log directory already exists: {self.run_dir}. "
+                "Use the explicit resume path instead of overwriting it."
+            )
         self.run_dir.mkdir(parents=True, exist_ok=True)
-        self._update_current_pointer(root)
+        (self.run_dir / "traces").mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._agent_csv_fields = [
             "run_id",
@@ -40,6 +75,7 @@ class SimulationLogger:
             "turn",
             "subturn",
             "agent_id",
+            *LINEAGE_FIELDS,
             "decision_date",
             "market_features_date",
             "news_start_date",
@@ -101,6 +137,7 @@ class SimulationLogger:
             "turn",
             "subturn",
             "agent_id",
+            *LINEAGE_FIELDS,
             "decision_date",
             "market_features_date",
             "news_start_date",
@@ -124,9 +161,11 @@ class SimulationLogger:
             "subturn",
             "stock_code",
             "agent_id",
+            *LINEAGE_FIELDS,
             "action",
             "quantity",
             "executed_price",
+            "fee",
             "status",
         ]
         self._daily_csv_fields = [
@@ -147,6 +186,9 @@ class SimulationLogger:
             "turn",
             "agent_id",
             "post_id",
+            "source_ltb_id",
+            "source_fill_id",
+            "source_decision_id",
             "post_type",
             "title",
             "content",
@@ -158,11 +200,25 @@ class SimulationLogger:
             "agent_id",
             "selected_post_ids",
             "post_id",
+            "exposure_level",
+            "selected",
+            "is_best",
+            "anonymous_code",
             "title",
             "post_type",
+            "content",
+            "body_sha256",
             "reaction",
             "author_badges",
             "author_profile",
+            "profile_scope",
+            "source_date",
+            "delivery_date",
+            "source_turn",
+            "delivery_turn",
+            "delivery_status",
+            "replay",
+            "provenance_id",
         ]
         self._community_selection_csv_fields = [
             "run_id",
@@ -181,9 +237,25 @@ class SimulationLogger:
             "turn",
             "rank",
             "post_id",
+            "author_agent_id",
+            "anonymous_code",
             "title",
             "post_type",
             "score",
+            "like_count",
+            "unlike_count",
+            "content",
+            "body_sha256",
+            "author_badges",
+            "author_profile_snapshot",
+            "snapshot_turn",
+            "snapshot_date",
+            "audience_count",
+            "scheduled_delivery_count",
+            "actual_delivery_count",
+            "self_excluded_count",
+            "self_exclusion_policy",
+            "delivery_status",
         ]
         self._community_logs_csv_fields = [
             "run_id",
@@ -192,9 +264,11 @@ class SimulationLogger:
             "agent_id",
             "best_posts_count",
             "posts_read_count",
+            "candidate_posts_seen_count",
             "community_thinking",
             "best_posts_json",
             "posts_read_json",
+            "candidate_posts_seen_json",
         ]
         self._init_csv(self.run_dir / "agent_turns.csv", self._agent_csv_fields, append_existing=append_existing)
         self._init_csv(self.run_dir / "submitted_orders.csv", self._orders_csv_fields, append_existing=append_existing)
@@ -205,6 +279,11 @@ class SimulationLogger:
         self._init_csv(self.run_dir / "community_interactions.csv", self._community_interactions_csv_fields, append_existing=append_existing)
         self._init_csv(self.run_dir / "community_best_posts.csv", self._community_best_csv_fields, append_existing=append_existing)
         self._init_csv(self.run_dir / "community_logs.csv", self._community_logs_csv_fields, append_existing=append_existing)
+        self._community_provenance_ids = {
+            str(row.get("provenance_id"))
+            for row in self._read_csv_rows(self.run_dir / "community_interactions.csv")
+            if row.get("provenance_id")
+        }
         if not append_existing or not (self.run_dir / "run_metadata.json").exists():
             self.write_json("run_metadata.json", {"run_id": self.run_id, "created_at": timestamp, **(metadata or {})})
 
@@ -222,8 +301,20 @@ class SimulationLogger:
         order: dict[str, Any] | None,
         depth2_flow: dict[str, Any] | None = None,
         fake_news_audit: dict[str, Any] | None = None,
+        lineage: Mapping[str, Any] | None = None,
     ) -> None:
         news_context = context.get("news_context") or {}
+        lineage_ids = _lineage_values(
+            context.get("lineage"),
+            {
+                "source_stb_id": belief.get("source_stb_id")
+                or belief.get("stb_id"),
+                "post_fill_ltb_id": belief.get("post_fill_ltb_id"),
+            },
+            decision,
+            order,
+            lineage,
+        )
         event = {
             "run_id": self.run_id,
             "event": "agent_turn",
@@ -237,6 +328,8 @@ class SimulationLogger:
             "decision": decision,
             "submitted_order": order,
         }
+        if lineage_ids:
+            event["lineage"] = lineage_ids
         if depth2_flow is not None:
             event["depth2_flow"] = depth2_flow
         if fake_news_audit is not None:
@@ -260,6 +353,7 @@ class SimulationLogger:
                 "turn": turn,
                 "subturn": context.get("subturn", "full"),
                 "agent_id": agent.get("agent_id"),
+                **lineage_ids,
                 "decision_date": context.get("decision_date", date),
                 "market_features_date": context.get("market_features_date", date),
                 "news_start_date": context.get("news_start_date") or "",
@@ -323,7 +417,11 @@ class SimulationLogger:
             },
         )
         if order:
-            self.log_submitted_order(order, turn=turn, date=date)
+            self.log_submitted_order(
+                {**order, **lineage_ids},
+                turn=turn,
+                date=date,
+            )
 
     def log_agent_error(self, *, agent: dict[str, Any], turn: int, date: str, error: BaseException) -> None:
         self.write_jsonl(
@@ -349,6 +447,7 @@ class SimulationLogger:
                 "turn": turn,
                 "subturn": order.get("subturn", ""),
                 "agent_id": order.get("user_id"),
+                **_lineage_values(order),
                 "decision_date": order.get("decision_date", date),
                 "market_features_date": order.get("market_features_date", date),
                 "news_start_date": order.get("news_start_date") or "",
@@ -388,6 +487,11 @@ class SimulationLogger:
         )
         for stock_code, result in sorted(results.items()):
             transactions = result.get("transactions") or []
+            orders_by_agent = {
+                str(order.get("user_id") or order.get("agent_id")): order
+                for order in orders
+                if order.get("user_id") or order.get("agent_id")
+            }
             self.append_csv(
                 "daily_exchange_summary.csv",
                 self._daily_csv_fields,
@@ -405,6 +509,11 @@ class SimulationLogger:
                 },
             )
             for tx in transactions:
+                agent_id = tx.get("agent_id") or tx.get("user_id")
+                lineage_ids = _lineage_values(
+                    orders_by_agent.get(str(agent_id)),
+                    tx,
+                )
                 self.append_csv(
                     "exchange_fills.csv",
                     self._fills_csv_fields,
@@ -414,10 +523,12 @@ class SimulationLogger:
                         "turn": turn,
                         "subturn": _subturn_from_turn(turn),
                         "stock_code": tx.get("stock_code", stock_code),
-                        "agent_id": tx.get("agent_id") or tx.get("user_id"),
+                        "agent_id": agent_id,
+                        **lineage_ids,
                         "action": tx.get("action") or tx.get("direction"),
                         "quantity": tx.get("quantity") or tx.get("executed_quantity"),
                         "executed_price": tx.get("executed_price"),
+                        "fee": tx.get("fee", 0),
                         "status": tx.get("status", "filled"),
                     },
                 )
@@ -448,6 +559,11 @@ class SimulationLogger:
                 "turn": turn,
                 "agent_id": agent_id,
                 "post_id": post.get("post_id"),
+                "source_ltb_id": post.get("source_ltb_id"),
+                "source_fill_id": post.get("source_fill_id")
+                or post.get("fill_id"),
+                "source_decision_id": post.get("source_decision_id")
+                or post.get("decision_id"),
                 "post_type": post.get("post_type"),
                 "title": post.get("title"),
                 "content": post.get("content"),
@@ -474,22 +590,9 @@ class SimulationLogger:
         }
         self.write_jsonl("community_events.jsonl", event)
         if not posts_read:
-            self.append_csv(
-                "community_interactions.csv",
-                self._community_interactions_csv_fields,
-                {
-                    "run_id": self.run_id,
-                    "date": date,
-                    "turn": turn,
-                    "agent_id": agent_id,
-                    "selected_post_ids": json.dumps(selected_post_ids, ensure_ascii=False),
-                },
-            )
             return
         for post in posts_read:
-            self.append_csv(
-                "community_interactions.csv",
-                self._community_interactions_csv_fields,
+            self._append_community_interaction_once(
                 {
                     "run_id": self.run_id,
                     "date": date,
@@ -497,11 +600,28 @@ class SimulationLogger:
                     "agent_id": agent_id,
                     "selected_post_ids": json.dumps(selected_post_ids, ensure_ascii=False),
                     "post_id": post.get("post_id"),
+                    "exposure_level": post.get("exposure_level", "full_body"),
+                    "selected": True,
+                    "is_best": bool(post.get("is_best", False)),
+                    "anonymous_code": post.get("anonymous_code"),
                     "title": post.get("title"),
                     "post_type": post.get("post_type"),
+                    "content": post.get("content"),
+                    "body_sha256": post.get("body_sha256"),
                     "reaction": post.get("reaction"),
                     "author_badges": json.dumps(post.get("author_badges") or [], ensure_ascii=False),
                     "author_profile": json.dumps(post.get("author_profile"), ensure_ascii=False, default=str),
+                    "profile_scope": post.get("profile_scope"),
+                    "source_date": date,
+                    "delivery_date": date,
+                    "source_turn": turn,
+                    "delivery_turn": turn,
+                    "delivery_status": "read_pm",
+                    "replay": False,
+                    "provenance_id": (
+                        f"community:{date}:t{turn}:post:{post.get('post_id')}:"
+                        f"selected_full_body:{agent_id}"
+                    ),
                 },
             )
 
@@ -514,7 +634,9 @@ class SimulationLogger:
         depth: int,
         read_limit: int,
         visible_posts: list[dict[str, Any]],
+        selected_post_ids: list[int] | None = None,
     ) -> None:
+        selected_ids = {int(post_id) for post_id in (selected_post_ids or [])}
         compact_posts = [
             {
                 "post_id": post.get("post_id"),
@@ -536,6 +658,7 @@ class SimulationLogger:
             "agent_id": agent_id,
             "depth": depth,
             "read_limit": read_limit,
+            "selected_post_ids": sorted(selected_ids),
             "visible_posts": compact_posts,
         }
         self.write_jsonl("community_selection_inputs.jsonl", event)
@@ -554,6 +677,37 @@ class SimulationLogger:
                 "visible_posts_json": json.dumps(compact_posts, ensure_ascii=False),
             },
         )
+        for post in compact_posts:
+            post_id = int(post["post_id"])
+            self._append_community_interaction_once(
+                {
+                    "run_id": self.run_id,
+                    "date": date,
+                    "turn": turn,
+                    "agent_id": agent_id,
+                    "selected_post_ids": json.dumps(sorted(selected_ids), ensure_ascii=False),
+                    "post_id": post_id,
+                    "exposure_level": "title_only",
+                    "selected": post_id in selected_ids,
+                    "is_best": False,
+                    "anonymous_code": post.get("anonymous_code"),
+                    "title": post.get("title"),
+                    "post_type": post.get("post_type"),
+                    "reaction": "",
+                    "author_badges": json.dumps(post.get("author_badges") or [], ensure_ascii=False),
+                    "profile_scope": "candidate_minimal",
+                    "source_date": date,
+                    "delivery_date": date,
+                    "source_turn": turn,
+                    "delivery_turn": turn,
+                    "delivery_status": "candidate_seen_pm",
+                    "replay": False,
+                    "provenance_id": (
+                        f"community:{date}:t{turn}:post:{post_id}:"
+                        f"title_only:{agent_id}"
+                    ),
+                },
+            )
 
     def log_community_best_posts(self, *, turn: int, date: str, best_posts: list[dict[str, Any]]) -> None:
         self.write_jsonl(
@@ -576,9 +730,104 @@ class SimulationLogger:
                     "turn": turn,
                     "rank": rank,
                     "post_id": post.get("post_id"),
+                    "author_agent_id": post.get("author_agent_id"),
+                    "anonymous_code": post.get("anonymous_code"),
                     "title": post.get("title"),
                     "post_type": post.get("post_type"),
                     "score": post.get("score"),
+                    "like_count": post.get("like_count"),
+                    "unlike_count": post.get("unlike_count"),
+                    "content": post.get("content"),
+                    "body_sha256": post.get("body_sha256"),
+                    "author_badges": json.dumps(post.get("author_badges") or [], ensure_ascii=False),
+                    "author_profile_snapshot": json.dumps(
+                        post.get("author_profile_snapshot"),
+                        ensure_ascii=False,
+                        default=str,
+                    ),
+                    "snapshot_turn": post.get("snapshot_turn"),
+                    "snapshot_date": post.get("snapshot_date"),
+                    "audience_count": post.get("audience_count"),
+                    "scheduled_delivery_count": post.get("scheduled_delivery_count"),
+                    "actual_delivery_count": post.get("actual_delivery_count"),
+                    "self_excluded_count": post.get("self_excluded_count"),
+                    "self_exclusion_policy": post.get("self_exclusion_policy"),
+                    "delivery_status": post.get("delivery_status"),
+                },
+            )
+
+    def log_community_delivery(
+        self,
+        *,
+        agent_id: str,
+        source_turn: int,
+        delivery_turn: int,
+        source_date: str,
+        delivery_date: str,
+        best_posts: list[dict[str, Any]],
+        posts_read: list[dict[str, Any]],
+    ) -> None:
+        self.write_jsonl(
+            "community_events.jsonl",
+            {
+                "run_id": self.run_id,
+                "event": "community_delivery",
+                "agent_id": agent_id,
+                "source_turn": source_turn,
+                "delivery_turn": delivery_turn,
+                "source_date": source_date,
+                "delivery_date": delivery_date,
+                "best_posts": best_posts,
+                "selected_posts_replayed": posts_read,
+            },
+        )
+        relations = [
+            ("best_full_body", True, False, post)
+            for post in best_posts
+        ]
+        relations.extend(
+            ("selected_full_body_replay", False, True, post)
+            for post in posts_read
+        )
+        for relation, is_best, replay, post in relations:
+            post_id = int(post["post_id"])
+            self._append_community_interaction_once(
+                {
+                    "run_id": self.run_id,
+                    "date": delivery_date,
+                    "turn": delivery_turn,
+                    "agent_id": agent_id,
+                    "selected_post_ids": "",
+                    "post_id": post_id,
+                    "exposure_level": "full_body",
+                    "selected": relation.startswith("selected_"),
+                    "is_best": is_best,
+                    "anonymous_code": post.get("anonymous_code"),
+                    "title": post.get("title"),
+                    "post_type": post.get("post_type"),
+                    "content": post.get("content"),
+                    "body_sha256": post.get("body_sha256"),
+                    "reaction": post.get("reaction") if replay else "",
+                    "author_badges": json.dumps(
+                        post.get("author_badges") or [],
+                        ensure_ascii=False,
+                    ),
+                    "author_profile": json.dumps(
+                        post.get("author_profile"),
+                        ensure_ascii=False,
+                        default=str,
+                    ),
+                    "profile_scope": post.get("profile_scope"),
+                    "source_date": source_date,
+                    "delivery_date": delivery_date,
+                    "source_turn": source_turn,
+                    "delivery_turn": delivery_turn,
+                    "delivery_status": "delivered_am",
+                    "replay": replay,
+                    "provenance_id": (
+                        f"community:{source_date}:t{source_turn}:post:{post_id}:"
+                        f"{relation}:{agent_id}:delivered_t{delivery_turn}"
+                    ),
                 },
             )
 
@@ -590,8 +839,10 @@ class SimulationLogger:
         date: str,
         best_posts: list[dict[str, Any]],
         posts_read: list[dict[str, Any]],
+        candidate_posts_seen: list[dict[str, Any]] | None = None,
         community_thinking: str = "",
     ) -> None:
+        candidate_posts = list(candidate_posts_seen or [])
         event = {
             "run_id": self.run_id,
             "event": "community_log_saved",
@@ -600,6 +851,7 @@ class SimulationLogger:
             "agent_id": agent_id,
             "best_posts": best_posts,
             "posts_read": posts_read,
+            "candidate_posts_seen": candidate_posts,
             "community_thinking": community_thinking,
         }
         self.write_jsonl("community_events.jsonl", event)
@@ -613,9 +865,15 @@ class SimulationLogger:
                 "agent_id": agent_id,
                 "best_posts_count": len(best_posts),
                 "posts_read_count": len(posts_read),
+                "candidate_posts_seen_count": len(candidate_posts),
                 "community_thinking": community_thinking,
                 "best_posts_json": json.dumps(best_posts, ensure_ascii=False),
                 "posts_read_json": json.dumps(posts_read, ensure_ascii=False, default=str),
+                "candidate_posts_seen_json": json.dumps(
+                    candidate_posts,
+                    ensure_ascii=False,
+                    default=str,
+                ),
             },
         )
 
@@ -635,36 +893,69 @@ class SimulationLogger:
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writerow({field: row.get(field, "") for field in fieldnames})
 
+    def _append_community_interaction_once(self, row: dict[str, Any]) -> bool:
+        provenance_id = str(row.get("provenance_id") or "")
+        if not provenance_id:
+            raise ValueError("community interaction requires a provenance_id")
+        with self._lock:
+            if provenance_id in self._community_provenance_ids:
+                return False
+            with (self.run_dir / "community_interactions.csv").open(
+                "a",
+                encoding="utf-8-sig",
+                newline="",
+            ) as f:
+                writer = csv.DictWriter(
+                    f,
+                    fieldnames=self._community_interactions_csv_fields,
+                )
+                writer.writerow(
+                    {
+                        field: row.get(field, "")
+                        for field in self._community_interactions_csv_fields
+                    }
+                )
+            with (self.run_dir / "traces" / "community_exposure_trace.jsonl").open(
+                "a",
+                encoding="utf-8",
+            ) as f:
+                f.write(
+                    json.dumps(
+                        {
+                            "artifact": "community_exposure_trace",
+                            **{
+                                field: row.get(field, "")
+                                for field in self._community_interactions_csv_fields
+                            },
+                        },
+                        ensure_ascii=False,
+                        default=str,
+                    )
+                    + "\n"
+                )
+            self._community_provenance_ids.add(provenance_id)
+        return True
+
     def _init_csv(self, path: Path, fieldnames: list[str], *, append_existing: bool = False) -> None:
         if append_existing and path.exists() and path.stat().st_size > 0:
+            with path.open("r", encoding="utf-8-sig", newline="") as f:
+                existing_header = next(csv.reader(f), [])
+            if existing_header != fieldnames:
+                raise RuntimeError(
+                    f"Cannot resume with incompatible CSV schema: {path.name}. "
+                    "Start a new run or use the original code version for this run."
+                )
             return
         with path.open("w", encoding="utf-8-sig", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
 
-    def _update_current_pointer(self, root: Path) -> None:
-        current = root / "current"
-        tmp_current = root / f".current.{self.run_id}.tmp"
-        if tmp_current.exists() or tmp_current.is_symlink():
-            if tmp_current.is_dir() and not tmp_current.is_symlink():
-                shutil.rmtree(tmp_current)
-            else:
-                tmp_current.unlink()
-        try:
-            tmp_current.symlink_to(self.run_dir.name, target_is_directory=True)
-            tmp_current.replace(current)
-        except OSError:
-            if tmp_current.exists() or tmp_current.is_symlink():
-                tmp_current.unlink()
-            if current.exists() or current.is_symlink():
-                if current.is_dir() and not current.is_symlink():
-                    shutil.rmtree(current)
-                else:
-                    current.unlink()
-            try:
-                shutil.copytree(self.run_dir, current)
-            except FileExistsError:
-                pass
+    @staticmethod
+    def _read_csv_rows(path: Path) -> list[dict[str, str]]:
+        if not path.exists() or path.stat().st_size == 0:
+            return []
+        with path.open("r", encoding="utf-8-sig", newline="") as f:
+            return list(csv.DictReader(f))
 
     @staticmethod
     def _compact_agent(agent: dict[str, Any]) -> dict[str, Any]:
@@ -678,6 +969,103 @@ class SimulationLogger:
             "segment_key",
         ]
         return {key: agent.get(key) for key in keys}
+
+
+def finalize_community_delivery_counts(run_dir: Path | str) -> dict[str, int]:
+    """Derive Best delivery counts from append-only AM exposure relations."""
+    root = Path(run_dir)
+    best_path = root / "community_best_posts.csv"
+    interaction_path = root / "community_interactions.csv"
+    if not best_path.exists() or best_path.stat().st_size == 0:
+        return {
+            "best_posts": 0,
+            "delivered": 0,
+            "right_censored": 0,
+            "no_eligible_recipient": 0,
+        }
+
+    with best_path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        fieldnames = list(reader.fieldnames or [])
+        best_rows = list(reader)
+    if not best_rows:
+        return {
+            "best_posts": 0,
+            "delivered": 0,
+            "right_censored": 0,
+            "no_eligible_recipient": 0,
+        }
+    required = {
+        "date",
+        "turn",
+        "post_id",
+        "scheduled_delivery_count",
+        "actual_delivery_count",
+        "delivery_status",
+    }
+    missing = required - set(fieldnames)
+    if missing:
+        raise RuntimeError(
+            f"community_best_posts.csv lacks delivery fields: {sorted(missing)}"
+        )
+
+    interaction_rows: list[dict[str, str]] = []
+    if interaction_path.exists() and interaction_path.stat().st_size > 0:
+        with interaction_path.open("r", encoding="utf-8-sig", newline="") as f:
+            interaction_rows = list(csv.DictReader(f))
+    actual_by_best: Counter[tuple[str, str, str]] = Counter()
+    for row in interaction_rows:
+        if (
+            str(row.get("delivery_status") or "") == "delivered_am"
+            and str(row.get("is_best") or "").strip().lower() == "true"
+        ):
+            actual_by_best[
+                (
+                    str(row.get("source_date") or ""),
+                    str(row.get("source_turn") or ""),
+                    str(row.get("post_id") or ""),
+                )
+            ] += 1
+
+    last_source_date = max(str(row.get("date") or "") for row in best_rows)
+    delivered = 0
+    right_censored = 0
+    no_eligible_recipient = 0
+    for row in best_rows:
+        key = (
+            str(row.get("date") or ""),
+            str(row.get("turn") or ""),
+            str(row.get("post_id") or ""),
+        )
+        scheduled = int(row.get("scheduled_delivery_count") or 0)
+        actual = int(actual_by_best.get(key, 0))
+        row["actual_delivery_count"] = str(actual)
+        if scheduled == 0 and actual == 0:
+            row["delivery_status"] = "no_eligible_recipient"
+            no_eligible_recipient += 1
+        elif scheduled > 0 and actual == scheduled:
+            row["delivery_status"] = "delivered_am"
+            delivered += 1
+        elif actual == 0 and str(row.get("date") or "") == last_source_date:
+            row["delivery_status"] = "right_censored"
+            right_censored += 1
+        elif actual == 0:
+            row["delivery_status"] = "missing_delivery"
+        else:
+            row["delivery_status"] = "partially_delivered"
+
+    temporary = best_path.with_name(f".{best_path.name}.{os.getpid()}.tmp")
+    with temporary.open("w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(best_rows)
+    temporary.replace(best_path)
+    return {
+        "best_posts": len(best_rows),
+        "delivered": delivered,
+        "right_censored": right_censored,
+        "no_eligible_recipient": no_eligible_recipient,
+    }
 
 
 def _subturn_from_turn(turn: int) -> str:

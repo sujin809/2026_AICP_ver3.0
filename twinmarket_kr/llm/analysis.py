@@ -7,8 +7,17 @@ from twinmarket_kr.agents.news_agent import (
     DEPTH2_MAX_KEYWORDS,
     DEPTH2_MAX_SEARCH_ARTICLES,
 )
-from twinmarket_kr.llm.belief import load_prompt
+from twinmarket_kr.llm.belief import BELIEF_DIMENSION_KEYS, belief_dimensions, render_prompt
+from twinmarket_kr.llm.call_policy import (
+    INTEGRATED_STAGE_MAX_TOKENS_V1,
+    INTEGRATED_STAGE_SCHEMA_VERSIONS_V1,
+)
 from twinmarket_kr.llm.client import OpenRouterClient, response_content, stable_llm_seed
+from twinmarket_kr.llm.response_journal import (
+    ResponseJournalError,
+    open_journal_call,
+    parse_strict_json_object,
+)
 from twinmarket_kr.llm.validation import (
     LLMValidationError,
     build_validation_retry_prompt,
@@ -38,6 +47,8 @@ MARKET_ANALYSIS_KEYS = (
     "opportunity",
     "caution",
     "confidence",
+    "directional_stance",
+    "evidence_references",
 )
 
 DEPTH2_PRE_SEARCH_KEYS = (
@@ -129,25 +140,110 @@ async def _required_json_response(
         raise ValueError("validation_attempts must be at least 1")
     invalid_history: list[list[str]] = []
     current_prompt = prompt
-    for attempt in range(1, validation_attempts + 1):
-        attempt_seed = stable_llm_seed(seed or 0, label, attempt)
-        response = await client.chat(
-            [{"role": "user", "content": current_prompt}],
-            response_format={"type": "json_object"},
-            temperature=0.2 if attempt == 1 else 0.1,
-            seed=attempt_seed,
-            audit_label=label,
+    temperatures = [
+        0.2 if attempt == 1 else 0.1
+        for attempt in range(1, validation_attempts + 1)
+    ]
+    seeds = [
+        stable_llm_seed(seed or 0, label, attempt)
+        for attempt in range(1, validation_attempts + 1)
+    ]
+    max_tokens = int(INTEGRATED_STAGE_MAX_TOKENS_V1[label])
+    journal_call = open_journal_call(
+        stage=label,
+        schema_version=INTEGRATED_STAGE_SCHEMA_VERSIONS_V1[label],
+        base_prompt=prompt,
+        client=client,
+        temperature_schedule=temperatures,
+        seed_schedule=seeds,
+        max_tokens=max_tokens,
+        validation_attempts=validation_attempts,
+        validation_procedure_version=f"{label}-validator-v1",
+        response_format={"type": "json_object"},
+        semantic_inputs={
+            "required_keys": list(required_keys),
+            "schema_hint": schema_hint,
+        },
+    )
+    if journal_call is not None and journal_call.replay is not None:
+        raw = dict(journal_call.replay.response)
+        data = normalizer(dict(raw)) if normalizer is not None else dict(raw)
+        missing = [key for key in required_keys if key not in data]
+        validation_errors = (
+            validator(data)
+            if not missing and validator is not None
+            else []
         )
+        if missing or validation_errors:
+            raise ResponseJournalError(
+                f"accepted replay no longer passes {label} validator: "
+                f"{[*[f'missing:{key}' for key in missing], *validation_errors]}"
+            )
+        journal_call.repair_replay_acceptance(client=client)
+        data["generation_attempts"] = journal_call.replay.validation_attempt
+        return data
+    for attempt in range(1, validation_attempts + 1):
+        attempt_seed = seeds[attempt - 1]
+        if journal_call is not None:
+            journal_call.begin(attempt)
+        try:
+            response = await client.chat(
+                [{"role": "user", "content": current_prompt}],
+                response_format={"type": "json_object"},
+                temperature=temperatures[attempt - 1],
+                seed=attempt_seed,
+                max_tokens=max_tokens,
+                audit_label=label,
+                logical_call_id=(
+                    journal_call.logical_call_id
+                    if journal_call is not None
+                    else None
+                ),
+                phase_attempt_id=(
+                    journal_call.phase_attempt_id
+                    if journal_call is not None
+                    else None
+                ),
+            )
+        except BaseException as exc:
+            if journal_call is not None:
+                journal_call.error(attempt, exc)
+            raise
         raw_content = response_content(response) or "{}"
-        data = parse_json_loose(raw_content)
+        parse_errors: list[str] = []
+        raw: dict[str, Any] | None
+        try:
+            raw = (
+                parse_strict_json_object(raw_content)
+                if journal_call is not None
+                else parse_json_loose(raw_content)
+            )
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            raw = None
+            parse_errors.append(f"strict_json_object:{exc}")
+        data = dict(raw or {})
         if normalizer is not None:
             data = normalizer(data)
         missing = [key for key in required_keys if key not in data]
         validation_errors = validator(data) if not missing and validator is not None else []
-        if not missing and not validation_errors:
+        if not parse_errors and not missing and not validation_errors:
+            if journal_call is not None:
+                if raw is None:
+                    raise AssertionError("validated response has no raw JSON object")
+                journal_call.accept(raw, attempt, client=client)
             data["generation_attempts"] = attempt
             return data
-        errors = [*[f"missing:{key}" for key in missing], *validation_errors]
+        errors = [
+            *parse_errors,
+            *[f"missing:{key}" for key in missing],
+            *validation_errors,
+        ]
+        if journal_call is not None:
+            journal_call.rejected(
+                attempt,
+                response=raw,
+                errors=errors,
+            )
         invalid_history.append(errors)
         record_validation_failure(
             label=label,
@@ -226,7 +322,8 @@ async def interpret_news(
     seed: int | None = None,
 ) -> dict[str, Any]:
     client = client or OpenRouterClient()
-    prompt = load_prompt("news_interpretation.txt").format(
+    prompt = render_prompt(
+        "news_interpretation.txt",
         persona_prompt=agent["persona_prompt"],
         news_context=json.dumps(news_context, ensure_ascii=False, indent=2),
     )
@@ -267,7 +364,8 @@ async def depth2_pre_search(
     seed: int | None = None,
 ) -> dict[str, Any]:
     client = client or OpenRouterClient()
-    prompt = load_prompt("news_agent_pre_search.txt").format(
+    prompt = render_prompt(
+        "news_agent_pre_search.txt",
         persona_prompt=agent["persona_prompt"],
         base_news_context=json.dumps(base_news_context, ensure_ascii=False, indent=2),
     )
@@ -294,7 +392,8 @@ async def depth2_post_search(
     seed: int | None = None,
 ) -> dict[str, Any]:
     client = client or OpenRouterClient()
-    prompt = load_prompt("news_agent_post_search.txt").format(
+    prompt = render_prompt(
+        "news_agent_post_search.txt",
         persona_prompt=agent["persona_prompt"],
         base_news_context=json.dumps(base_news_context, ensure_ascii=False, indent=2),
         search_results=json.dumps(search_results, ensure_ascii=False, indent=2),
@@ -316,32 +415,71 @@ async def depth2_post_search(
 async def analyze_market(
     agent: dict[str, Any],
     *,
-    today_belief: dict[str, Any],
+    previous_ltb: dict[str, Any],
+    current_stb: dict[str, Any],
     market_features: dict[str, Any],
     portfolio_summary: str,
-    news_interpretation: dict[str, Any],
+    execution_state: dict[str, Any],
     client: OpenRouterClient | None = None,
     seed: int | None = None,
 ) -> dict[str, Any]:
     client = client or OpenRouterClient()
-    prompt = load_prompt("market_analysis.txt").format(
+    previous_dimensions = belief_dimensions(
+        previous_ltb.get("dimensions", previous_ltb),
+        label="analysis.previous_ltb",
+    )
+    current_dimensions = belief_dimensions(
+        current_stb.get("dimensions", current_stb),
+        label="analysis.current_stb",
+    )
+    stage_payload = {
+        "schema_version": "simulation-analysis-input-v1",
+        "persona": {
+            "agent_id": str(agent["agent_id"]),
+        },
+        "previous_ltb": previous_dimensions,
+        "current_stb": current_dimensions,
+        "market": dict(market_features),
+        "execution_state": dict(execution_state),
+    }
+    prompt = render_prompt(
+        "market_analysis.txt",
         persona_prompt=agent["persona_prompt"],
-        today_belief=json.dumps(today_belief, ensure_ascii=False, indent=2),
+        today_belief=json.dumps(
+            {
+                "previous_ltb": previous_dimensions,
+                "current_stb": current_dimensions,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
         market_features=json.dumps(market_features, ensure_ascii=False, indent=2),
         portfolio_summary=portfolio_summary,
-        news_interpretation=json.dumps(news_interpretation, ensure_ascii=False, indent=2),
+        news_interpretation=json.dumps(
+            {"source": "current_stb.dim_5"}, ensure_ascii=False, indent=2
+        ),
+    ).replace(
+        "<<STAGE_PAYLOAD_JSON>>",
+        json.dumps(stage_payload, ensure_ascii=False, indent=2),
     )
-    return await _required_json_response(
-        client=client,
-        prompt=prompt,
-        required_keys=MARKET_ANALYSIS_KEYS,
-        label="market_analysis",
-        seed=seed,
-        validator=lambda value: [
+    allowed_reference_fields = {
+        "previous_ltb": set(BELIEF_DIMENSION_KEYS),
+        "current_stb": set(BELIEF_DIMENSION_KEYS),
+        "market": set(market_features),
+        "execution_state": set(execution_state),
+    }
+
+    def validate_analysis(value: dict[str, Any]) -> list[str]:
+        errors = [
             *(
                 []
                 if value.get("confidence") in {"high", "medium", "low"}
                 else ["confidence:invalid"]
+            ),
+            *(
+                []
+                if value.get("directional_stance") in {"buy", "sell", "uncertain"}
+                else ["directional_stance:invalid"]
             ),
             *[
                 f"{key}:empty"
@@ -359,5 +497,41 @@ async def analyze_market(
                 for key in ("key_risks", "opportunity", "caution")
                 if not _nonempty_text_or_string_list(value.get(key))
             ],
-        ],
+        ]
+        references = value.get("evidence_references")
+        if not isinstance(references, list):
+            return [*errors, "evidence_references:requires_array"]
+        observed_sources: set[str] = set()
+        observed_pairs: set[tuple[str, str]] = set()
+        for index, reference in enumerate(references):
+            if not isinstance(reference, dict) or set(reference) != {"source", "field"}:
+                errors.append(f"evidence_references[{index}]:invalid_schema")
+                continue
+            source = str(reference.get("source") or "")
+            field = str(reference.get("field") or "")
+            if source not in allowed_reference_fields:
+                errors.append(f"evidence_references[{index}]:invalid_source")
+                continue
+            if field not in allowed_reference_fields[source]:
+                errors.append(f"evidence_references[{index}]:invalid_field")
+            pair = (source, field)
+            if pair in observed_pairs:
+                errors.append(f"evidence_references[{index}]:duplicate")
+            observed_pairs.add(pair)
+            observed_sources.add(source)
+        missing_sources = set(allowed_reference_fields) - observed_sources
+        if missing_sources:
+            errors.append(
+                "evidence_references:missing_sources:"
+                + ",".join(sorted(missing_sources))
+            )
+        return errors
+
+    return await _required_json_response(
+        client=client,
+        prompt=prompt,
+        required_keys=MARKET_ANALYSIS_KEYS,
+        label="market_analysis",
+        seed=seed,
+        validator=validate_analysis,
     )

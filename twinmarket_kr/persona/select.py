@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import inspect
 import json
 import random
 import sqlite3
+import unicodedata
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Iterable
@@ -57,6 +60,30 @@ LOCATION_WEIGHTS = {
     "제주": 1,
     "세종": 1,
 }
+
+PERSONA_RENDERER_ID = (
+    "integrated-persona-v2-legacy-content-depth-repaired-nfc-lf"
+)
+STRUCTURED_PERSONA_FIELDS = (
+    "agent_id",
+    "source_user_id",
+    "user_type",
+    "gender",
+    "age",
+    "age_group",
+    "location",
+    "bh_disposition_effect_category",
+    "bh_lottery_preference_category",
+    "bh_total_return_category",
+    "bh_underdiversification_category",
+    "strategy",
+    "trad_pro",
+    "fol_ind",
+    "ini_cash",
+    "news_depth",
+    "segment_key",
+    "match_score",
+)
 
 
 def _map_value(value: object) -> object:
@@ -125,7 +152,24 @@ def assign_depth0_agents(agents: list[dict], rng: random.Random) -> None:
         agent["news_depth"] = 0
 
 
-def generate_persona_prompt(agent: dict) -> str:
+def generate_persona_prompt(
+    agent: dict,
+    *,
+    instrument_name: str = "삼성전자",
+) -> str:
+    """Render the canonical persona projection from structured DB fields.
+
+    The stored ``persona_prompt`` blob is intentionally ignored.  In the
+    source cohort it can disagree with ``news_depth``; rebuilding the prompt
+    here keeps the 30/55/15 structured depth map as the sole authority.
+    """
+
+    gender_desc = {"male": "남성", "female": "여성"}
+    user_type_desc = {
+        "ordinary": "일반 개인투자자",
+        "small_influencer": "팔로워가 적은 투자 인플루언서",
+        "big_influencer": "영향력이 큰 투자 인플루언서",
+    }
     disposition_desc = {
         "high": "수익이 나면 빠르게 매도하고 손실 시 추가 매수하는 경향이 강합니다",
         "medium": "수익과 손실 상황 모두에서 비교적 균형 잡힌 판단을 하는 편입니다",
@@ -148,32 +192,170 @@ def generate_persona_prompt(agent: dict) -> str:
     underdiv_desc = {
         "low": "비교적 잘 분산된 포트폴리오를 유지하는 편입니다",
         "medium": "특정 종목에 다소 집중하는 성향이 있습니다",
+        "high": "특정 종목에 매우 집중하는 성향이 있습니다",
     }
-    user_type_desc = {
-        "ordinary": "일반 개인투자자",
-        "small_influencer": "팔로워가 적은 투자 인플루언서",
-        "big_influencer": "영향력이 큰 투자 인플루언서",
-    }
-    gender_ko = "남성" if agent["gender"] == "male" else "여성"
     depth_desc = {
-        0: "뉴스는 당일 헤드라인만 훑고 세부 요약은 확인하지 않는 헤드라인 스캔형입니다.",
-        1: "뉴스는 당일 헤드라인과 10개 요약본을 모두 확인하는 요약 전독형입니다.",
-        2: "뉴스는 당일 헤드라인과 요약본을 확인한 뒤 필요하면 최근 7일 뉴스까지 추가 검색하는 심층 탐색형입니다.",
+        0: (
+            "뉴스는 각 AM/PM 거래 판단 시점에 제공된 기본 뉴스의 기사 "
+            "제목(헤드라인)을 모두 확인하고, 기사 요약은 확인하지 않는 "
+            "헤드라인 스캔형입니다."
+        ),
+        1: (
+            "뉴스는 각 AM/PM 거래 판단 시점에 제공된 기본 뉴스의 기사 "
+            "제목(헤드라인)과 그에 연결된 기사 요약을 모두 확인하는 "
+            "요약 전독형입니다."
+        ),
+        2: (
+            "뉴스는 각 AM/PM 거래 판단 시점에 제공된 기본 뉴스의 기사 "
+            "제목(헤드라인)과 기사 요약을 모두 확인한 뒤, 필요하면 최근 "
+            "7일 범위에서 추가 뉴스 최대 5건을 탐색하는 심층 탐색형입니다."
+        ),
     }
-    depth_line = depth_desc.get(int(agent["news_depth"]), depth_desc[1])
-    return (
-        "당신은 한국의 삼성전자 개인투자자입니다.\n"
-        f"성별은 {gender_ko}, 나이는 {agent['age']}세, 거주 지역은 {agent['location']}입니다.\n"
-        f"투자자 유형은 {user_type_desc.get(agent['user_type'], agent['user_type'])}이며, "
-        f"주요 투자 전략은 {strategy_desc[agent['strategy']]}\n"
-        f"처분효과 측면에서는 {disposition_desc[agent['bh_disposition_effect_category']]}.\n"
-        f"위험 자산 선호 측면에서는 {lottery_desc[agent['bh_lottery_preference_category']]}.\n"
-        f"성과 경험 측면에서는 {return_desc[agent['bh_total_return_category']]}.\n"
-        f"분산투자 측면에서는 {underdiv_desc[agent['bh_underdiversification_category']]}.\n"
-        f"{depth_line}\n"
-        "이번 실험에서는 삼성전자 단일 자산만 거래하며, "
-        f"초기에는 주식 없이 현금 {agent['ini_cash']:,}원만 보유한 상태로 시장에 진입합니다."
+    required_codes = {
+        "gender": gender_desc,
+        "user_type": user_type_desc,
+        "bh_disposition_effect_category": disposition_desc,
+        "bh_lottery_preference_category": lottery_desc,
+        "bh_total_return_category": return_desc,
+        "bh_underdiversification_category": underdiv_desc,
+        "strategy": strategy_desc,
+    }
+    for field, labels in required_codes.items():
+        if agent.get(field) not in labels:
+            raise ValueError(
+                f"Unsupported structured persona value {field}={agent.get(field)!r}"
+            )
+    depth = int(agent["news_depth"])
+    if depth not in depth_desc:
+        raise ValueError("news_depth must be one of 0, 1, 2")
+    age = int(agent["age"])
+    initial_cash = int(agent["ini_cash"])
+    location = str(agent["location"]).strip()
+    if age < 1:
+        raise ValueError("age must be positive")
+    if initial_cash < 1:
+        raise ValueError("ini_cash must be positive")
+    if not location:
+        raise ValueError("location must be non-empty")
+    instrument = str(instrument_name).strip()
+    if not instrument:
+        raise ValueError("instrument_name must be non-empty")
+    prompt = "\n".join(
+        (
+            f"당신은 한국의 {instrument} 개인투자자입니다.",
+            (
+                f"성별은 {gender_desc[agent['gender']]}, 나이는 {age}세, "
+                f"거주 지역은 {location}입니다."
+            ),
+            (
+                f"투자자 유형은 {user_type_desc[agent['user_type']]}이며, "
+                f"주요 투자 전략은 {strategy_desc[agent['strategy']]}"
+            ),
+            (
+                "처분효과 측면에서는 "
+                f"{disposition_desc[agent['bh_disposition_effect_category']]}."
+            ),
+            (
+                "위험 자산 선호 측면에서는 "
+                f"{lottery_desc[agent['bh_lottery_preference_category']]}."
+            ),
+            (
+                "성과 경험 측면에서는 "
+                f"{return_desc[agent['bh_total_return_category']]}."
+            ),
+            (
+                "분산투자 측면에서는 "
+                f"{underdiv_desc[agent['bh_underdiversification_category']]}."
+            ),
+            depth_desc[depth],
+            (
+                f"이번 실험에서는 {instrument} 단일 자산만 거래하며, "
+                f"초기에는 주식 없이 현금 {initial_cash:,}원만 보유한 "
+                "상태로 시장에 진입합니다."
+            ),
+        )
     )
+    return (
+        unicodedata.normalize("NFC", prompt)
+        .replace("\r\n", "\n")
+        .replace("\r", "\n")
+        .rstrip("\n")
+        + "\n"
+    )
+
+
+def persona_renderer_sha256() -> str:
+    """Bind a sealed cohort to the common structured-field renderer.
+
+    The digest is intentionally based on the implementation and a stable
+    renderer ID, not on a local file path or on the stale ``persona_prompt``
+    blobs stored in the source database.
+    """
+
+    payload = json.dumps(
+        {
+            "renderer_id": PERSONA_RENDERER_ID,
+            "render_source": inspect.getsource(generate_persona_prompt),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def structured_persona_sha256(agent: dict) -> str:
+    """Hash every authoritative structured persona field.
+
+    ``persona_prompt`` is deliberately excluded because it is the stale
+    projection being repaired. Matching metadata stays pinned even though it
+    is not shown to the model.
+    """
+
+    missing = [
+        field
+        for field in STRUCTURED_PERSONA_FIELDS
+        if field not in agent
+    ]
+    if missing:
+        raise ValueError(
+            "structured persona fields are missing: " + ",".join(missing)
+        )
+    integer_fields = {
+        "age",
+        "trad_pro",
+        "ini_cash",
+        "news_depth",
+        "match_score",
+    }
+    payload: dict[str, object] = {}
+    for field in STRUCTURED_PERSONA_FIELDS:
+        value = agent[field]
+        if field in integer_fields:
+            payload[field] = int(value)
+        elif field == "fol_ind":
+            try:
+                industries = json.loads(str(value))
+            except json.JSONDecodeError as exc:
+                raise ValueError("fol_ind must be a JSON array") from exc
+            if not isinstance(industries, list):
+                raise ValueError("fol_ind must be a JSON array")
+            payload[field] = [
+                unicodedata.normalize("NFC", str(item)).strip()
+                for item in industries
+            ]
+        else:
+            payload[field] = unicodedata.normalize(
+                "NFC",
+                str(value),
+            ).strip()
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def match_agents(pool: list[dict], slots: list[dict], seed: int = config.RANDOM_SEED) -> list[dict]:
@@ -245,7 +427,12 @@ def verify_distribution(agents: list[dict]) -> dict:
     age_group = Counter(agent["age_group"] for agent in agents)
     cash = Counter(agent["ini_cash"] for agent in agents)
     depth = Counter(agent["news_depth"] for agent in agents)
-    prompt_errors = [agent["agent_id"] for agent in agents if not agent.get("persona_prompt")]
+    prompt_errors = [
+        agent["agent_id"]
+        for agent in agents
+        if not agent.get("persona_prompt")
+        or agent["persona_prompt"] != generate_persona_prompt(agent)
+    ]
 
     segment_scores: dict[str, list[int]] = defaultdict(list)
     for agent in agents:
@@ -255,6 +442,7 @@ def verify_distribution(agents: list[dict]) -> dict:
         "gender": {"male": 43, "female": 57},
         "age_group": {"20대": 9, "30대": 18, "40대": 23, "50대": 26, "60대": 17, "70대": 6, "80대 이상": 1},
         "cash": {config.INI_CASH_SMALL: 90, config.INI_CASH_LARGE: 10},
+        "news_depth": {0: 30, 1: 55, 2: 15},
     }
     return {
         "count": len(agents),
@@ -264,7 +452,9 @@ def verify_distribution(agents: list[dict]) -> dict:
         "news_depth": dict(depth),
         "distribution_pass": dict(gender) == expected["gender"]
         and dict(age_group) == expected["age_group"]
-        and dict(cash) == expected["cash"],
+        and dict(cash) == expected["cash"]
+        and dict(depth) == expected["news_depth"]
+        and not prompt_errors,
         "prompt_errors": prompt_errors,
         "segment_avg_scores": {
             key: round(sum(values) / len(values), 3) for key, values in sorted(segment_scores.items())

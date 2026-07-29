@@ -4,8 +4,17 @@ import json
 from typing import Any
 
 import config
-from twinmarket_kr.llm.belief import load_prompt
+from twinmarket_kr.llm.belief import belief_dimensions, render_prompt
+from twinmarket_kr.llm.call_policy import (
+    INTEGRATED_STAGE_MAX_TOKENS_V1,
+    INTEGRATED_STAGE_SCHEMA_VERSIONS_V1,
+)
 from twinmarket_kr.llm.client import OpenRouterClient, response_content, stable_llm_seed
+from twinmarket_kr.llm.response_journal import (
+    ResponseJournalError,
+    open_journal_call,
+    parse_strict_json_object,
+)
 from twinmarket_kr.llm.validation import LLMValidationError, record_validation_failure
 
 
@@ -60,11 +69,11 @@ def parse_decision_json(content: str, constraints: dict[str, Any] | None = None)
         data = {}
     if not isinstance(data, dict):
         data = {}
+    expected_keys = {"action", "requested_quantity", "reason", "risk_control"}
+    raw_keys = set(data)
     for key, default in {
         "action": "",
-        "quantity": 0,
-        "order_type": "announced_price",
-        "price": 0,
+        "requested_quantity": 0,
         "reason": "",
         "risk_control": "",
     }.items():
@@ -72,7 +81,13 @@ def parse_decision_json(content: str, constraints: dict[str, Any] | None = None)
     action = str(data["action"]).strip().lower()
     corrections: list[str] = []
     validation_errors: list[str] = []
-    raw_quantity = data.get("quantity")
+    if raw_keys != expected_keys:
+        validation_errors.append(
+            "top_level_keys:"
+            f"missing={sorted(expected_keys - raw_keys)}:"
+            f"unknown={sorted(raw_keys - expected_keys)}"
+        )
+    raw_quantity = data.get("requested_quantity")
     try:
         if isinstance(raw_quantity, bool):
             raise ValueError("boolean is not an order quantity")
@@ -83,12 +98,8 @@ def parse_decision_json(content: str, constraints: dict[str, Any] | None = None)
     except (TypeError, ValueError, OverflowError):
         quantity = 0
         validation_errors.append("invalid_quantity_format")
-    try:
-        price = float(data.get("price") or 0)
-    except (TypeError, ValueError, OverflowError):
-        price = 0.0
-        validation_errors.append("invalid_price_format")
     order_type = "announced_price"
+    price = 0.0
     if constraints:
         allow_hold = bool(constraints.get("allow_hold", False))
         reference_price = float(constraints.get("current_price") or 0)
@@ -117,6 +128,7 @@ def parse_decision_json(content: str, constraints: dict[str, Any] | None = None)
         validation_errors.append("missing_risk_control")
     return {
         "action": action,
+        "requested_quantity": quantity,
         "quantity": quantity,
         "order_type": order_type,
         "price": price,
@@ -171,10 +183,10 @@ def _decision_diagnostics(
 
 async def make_decision(
     agent: dict[str, Any],
-    today_belief: dict[str, Any],
+    previous_ltb: dict[str, Any],
+    current_stb: dict[str, Any],
     market_analysis: dict[str, Any],
     portfolio_summary: str,
-    order_history: str,
     trading_constraints: dict[str, Any],
     *,
     allow_hold: bool = False,
@@ -192,35 +204,170 @@ async def make_decision(
         if not allow_hold
         else '이번 실행에서는 action으로 "buy", "sell", "hold" 중 하나를 선택할 수 있습니다.'
     )
-    prompt = load_prompt("make_decision.txt").format(
+    previous_dimensions = belief_dimensions(
+        previous_ltb.get("dimensions", previous_ltb),
+        label="decision.previous_ltb",
+    )
+    current_dimensions = belief_dimensions(
+        current_stb.get("dimensions", current_stb),
+        label="decision.current_stb",
+    )
+    stage_payload = {
+        "schema_version": "simulation-decision-input-v1",
+        "persona": {
+            "agent_id": str(agent.get("agent_id") or ""),
+        },
+        "previous_ltb": previous_dimensions,
+        "current_stb": current_dimensions,
+        "analysis": dict(market_analysis),
+        "execution_state": dict(trading_constraints),
+    }
+    prompt = render_prompt(
+        "make_decision.txt",
         persona_prompt=agent["persona_prompt"],
-        today_belief=json.dumps(today_belief, ensure_ascii=False, indent=2),
+        today_belief=json.dumps(
+            {
+                "previous_ltb": previous_dimensions,
+                "current_stb": current_dimensions,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
         market_analysis=json.dumps(market_analysis, ensure_ascii=False, indent=2),
         portfolio_summary=portfolio_summary,
-        order_history=order_history,
-        trading_constraints=json.dumps(trading_constraints, ensure_ascii=False, indent=2),
+        order_history="원시 주문 이력은 제공하지 않으며 체결 성찰은 이전 LTB에 반영되어 있습니다.",
+        trading_constraints=json.dumps(
+            trading_constraints, ensure_ascii=False, indent=2
+        ),
         decision_space_instruction=decision_space_instruction,
+    ).replace(
+        "<<STAGE_PAYLOAD_JSON>>",
+        json.dumps(stage_payload, ensure_ascii=False, indent=2),
     )
     if validation_attempts < 1:
         raise ValueError("validation_attempts must be at least 1")
     invalid_history: list[list[str]] = []
     current_prompt = prompt
-    for attempt in range(1, validation_attempts + 1):
-        attempt_seed = stable_llm_seed(seed or 0, "decision_validation", attempt)
-        response = await client.chat(
-            [{"role": "user", "content": current_prompt}],
-            response_format={"type": "json_object"},
-            temperature=0.2 if attempt == 1 else 0.1,
-            seed=attempt_seed,
-            audit_label="trading_decision",
+    stage = "trading_decision"
+    temperatures = [
+        0.2 if attempt == 1 else 0.1
+        for attempt in range(1, validation_attempts + 1)
+    ]
+    seeds = [
+        stable_llm_seed(seed or 0, "decision_validation", attempt)
+        for attempt in range(1, validation_attempts + 1)
+    ]
+    max_tokens = int(INTEGRATED_STAGE_MAX_TOKENS_V1[stage])
+    journal_call = open_journal_call(
+        stage=stage,
+        schema_version=INTEGRATED_STAGE_SCHEMA_VERSIONS_V1[stage],
+        base_prompt=prompt,
+        client=client,
+        temperature_schedule=temperatures,
+        seed_schedule=seeds,
+        max_tokens=max_tokens,
+        validation_attempts=validation_attempts,
+        validation_procedure_version="trading-decision-validator-v1",
+        response_format={"type": "json_object"},
+        semantic_inputs={
+            "allow_hold": bool(allow_hold),
+            "constraints": dict(trading_constraints),
+        },
+    )
+    if journal_call is not None and journal_call.replay is not None:
+        raw = dict(journal_call.replay.response)
+        decision = parse_decision_json(
+            json.dumps(raw, ensure_ascii=False),
+            trading_constraints,
         )
+        if not decision.get("valid"):
+            raise ResponseJournalError(
+                "accepted replay no longer passes trading decision validation: "
+                f"{decision.get('validation_errors')}"
+            )
+        journal_call.repair_replay_acceptance(client=client)
+        attempt = journal_call.replay.validation_attempt
+        decision.update(
+            _decision_diagnostics(
+                decision,
+                trading_constraints,
+                attempts=attempt,
+            )
+        )
+        decision["invalid_attempt_errors"] = (
+            journal_call.context.journal.rejected_errors(
+                journal_call.logical_call_id
+            )
+        )
+        return decision
+    for attempt in range(1, validation_attempts + 1):
+        attempt_seed = seeds[attempt - 1]
+        if journal_call is not None:
+            journal_call.begin(attempt)
+        try:
+            response = await client.chat(
+                [{"role": "user", "content": current_prompt}],
+                response_format={"type": "json_object"},
+                temperature=temperatures[attempt - 1],
+                seed=attempt_seed,
+                max_tokens=max_tokens,
+                audit_label=stage,
+                logical_call_id=(
+                    journal_call.logical_call_id
+                    if journal_call is not None
+                    else None
+                ),
+                phase_attempt_id=(
+                    journal_call.phase_attempt_id
+                    if journal_call is not None
+                    else None
+                ),
+            )
+        except BaseException as exc:
+            if journal_call is not None:
+                journal_call.error(attempt, exc)
+            raise
         raw_content = response_content(response) or "{}"
-        decision = parse_decision_json(raw_content, trading_constraints)
+        parse_errors: list[str] = []
+        raw: dict[str, Any] | None
+        try:
+            raw = (
+                parse_strict_json_object(raw_content)
+                if journal_call is not None
+                else None
+            )
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            raw = None
+            parse_errors.append(f"strict_json_object:{exc}")
+        decision = parse_decision_json(
+            (
+                json.dumps(raw, ensure_ascii=False)
+                if journal_call is not None and raw is not None
+                else raw_content
+            ),
+            trading_constraints,
+        )
+        if parse_errors:
+            decision["validation_errors"] = [
+                *parse_errors,
+                *list(decision.get("validation_errors") or []),
+            ]
+            decision["valid"] = False
         if decision.get("valid"):
+            if journal_call is not None:
+                if raw is None:
+                    raise AssertionError("validated response has no raw JSON object")
+                journal_call.accept(raw, attempt, client=client)
             decision.update(_decision_diagnostics(decision, trading_constraints, attempts=attempt))
             decision["invalid_attempt_errors"] = invalid_history
             return decision
         invalid_history.append(list(decision.get("validation_errors") or []))
+        if journal_call is not None:
+            journal_call.rejected(
+                attempt,
+                response=raw,
+                errors=list(decision.get("validation_errors") or []),
+            )
         record_validation_failure(
             label="trading_decision",
             attempt=attempt,

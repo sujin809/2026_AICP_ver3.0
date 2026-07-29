@@ -28,6 +28,7 @@ def collect_context(
     fundamental_agent: FundamentalAgent,
     news_agent: NewsAgent,
     community_agent: Any | None = None,
+    stock_code: str = config.STOCK_CODE,
 ) -> dict[str, Any]:
     market_date = market_features_date or date
     news_date = news_max_date or date
@@ -39,17 +40,17 @@ def collect_context(
     action_reason = memory_agent.get_last_action_reason(agent["agent_id"])
     system_message = memory_agent.get_recent_system_message(agent["agent_id"], current_turn=turn)
     news_depth = 1 if agent.get("news_depth") is None else int(agent["news_depth"])
-    if news_start_date and news_start_time and news_end_time:
-        news_context = news_agent.build_window_context(
-            start_date=news_start_date,
-            start_time=news_start_time,
-            end_date=news_date,
-            end_time=news_end_time,
-            news_depth=news_depth,
-        )
-    else:
-        news_context = news_agent.build_base_context(news_date, news_depth)
-    market_features = fundamental_agent.get_market_features(market_date, config.STOCK_CODE)
+    normalized_subturn = str(subturn).strip().upper()
+    if normalized_subturn not in {"AM", "PM"}:
+        raise ValueError("integrated runtime news requires an AM or PM subturn")
+    news_context = news_agent.build_event_context(
+        f"{date}/{normalized_subturn}",
+        news_depth,
+    )
+    market_features = fundamental_agent.get_market_features(
+        market_date,
+        stock_code,
+    )
     market_features["as_of_date"] = market_date
     market_features["subturn"] = subturn
     if previous_close is not None:
@@ -76,13 +77,13 @@ def collect_context(
     community_log = None
     community_log_turn = None
     if community_agent is not None and turn > 1:
-        if config.ENABLE_COMMUNITY and news_depth >= 1:
-            # The prior day's post-close board is injected directly once, at AM.
-            community_turn = turn - 1 if subturn == "am" else 0
-            if community_turn > 0:
-                community_log = community_agent.get_community_log(str(agent["agent_id"]), community_turn)
-                if community_log is not None:
-                    community_log_turn = community_turn
+        # The run-scoped community object is the authoritative ON/OFF switch.
+        # The prior day's post-close board is injected directly once, at AM.
+        community_turn = turn - 1 if subturn == "am" else 0
+        if community_turn > 0:
+            community_log = community_agent.get_community_log(str(agent["agent_id"]), community_turn)
+            if community_log is not None:
+                community_log_turn = community_turn
     return {
         "agent_id": agent["agent_id"],
         "turn": turn,

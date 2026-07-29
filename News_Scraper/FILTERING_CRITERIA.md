@@ -267,6 +267,7 @@
 
 ## 참고 문서
 
-- 전체 계획: `NEWS_RECRAWL_PLAN.md` (§5-3)
+- 과거 전체 계획:
+  `../archive/legacy_docs/NEWS_RECRAWL_PLAN.md` (§5-3)
 - 실행 스크립트: `News_Scraper/filter_relevance.py` (LLM 기반 판정)
 - 적용 스크립트: `News_Scraper/apply_filters.py` (두 필터 순차 적용)

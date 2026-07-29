@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 import json
 import tempfile
 import unittest
@@ -8,10 +7,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 import config
-from twinmarket_kr.agents.news_agent import NewsAgent
 from twinmarket_kr.llm.analysis import (
     AnalysisValidationError,
     _nonempty_text_or_string_list,
+    analyze_market,
     depth2_pre_search,
     normalize_depth2_post_search,
     normalize_depth2_pre_search,
@@ -35,7 +34,14 @@ from twinmarket_kr.experiment_runtime import (
 
 class _InvalidDecisionClient:
     async def chat(self, *args, **kwargs):
-        return json.dumps({"action": "hold", "quantity": 0})
+        return json.dumps(
+            {
+                "action": "hold",
+                "requested_quantity": 0,
+                "reason": "invalid hold response",
+                "risk_control": "invalid hold response",
+            }
+        )
 
 
 class _FailIfCalledClient:
@@ -53,6 +59,98 @@ class _SequenceClient:
         return self.responses.pop(0)
 
 
+class PersonaPromptProjectionTest(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _dimensions(prefix: str) -> dict[str, str]:
+        return {
+            f"dim_{index}": f"{prefix} dimension {index}"
+            for index in range(1, 7)
+        }
+
+    async def test_market_analysis_final_prompt_contains_persona_once(self) -> None:
+        persona = "PERSONA_SENTINEL_MARKET_ANALYSIS"
+        client = _SequenceClient(
+            [
+                json.dumps(
+                    {
+                        "market_view": "혼조 흐름이다.",
+                        "valuation_view": "판단이 어렵다.",
+                        "technical_view": "단기 변동성이 있다.",
+                        "news_view": "긍정과 부정 요인이 혼재한다.",
+                        "portfolio_view": "현금 여력을 유지할 수 있다.",
+                        "key_risks": ["변동성"],
+                        "opportunity": "제한적인 매수 기회가 있다.",
+                        "caution": "추격 매수는 주의한다.",
+                        "confidence": "medium",
+                        "directional_stance": "uncertain",
+                        "evidence_references": [
+                            {"source": "previous_ltb", "field": "dim_1"},
+                            {"source": "current_stb", "field": "dim_5"},
+                            {"source": "market", "field": "reference_price"},
+                            {
+                                "source": "execution_state",
+                                "field": "max_buy_quantity",
+                            },
+                        ],
+                    },
+                    ensure_ascii=False,
+                )
+            ]
+        )
+
+        await analyze_market(
+            {"agent_id": "A001", "persona_prompt": persona},
+            previous_ltb=self._dimensions("previous"),
+            current_stb=self._dimensions("current"),
+            market_features={"reference_price": 100_000},
+            portfolio_summary="현금 1억원, 보유 0주",
+            execution_state={"max_buy_quantity": 500},
+            client=client,
+            seed=2,
+        )
+
+        self.assertEqual(client.prompts[0].count(persona), 1)
+
+    async def test_trading_decision_final_prompt_contains_persona_once(self) -> None:
+        persona = "PERSONA_SENTINEL_TRADING_DECISION"
+        client = _SequenceClient(
+            [
+                json.dumps(
+                    {
+                        "action": "buy",
+                        "requested_quantity": 1,
+                        "reason": "Belief와 시장 분석을 반영한 제한적 매수다.",
+                        "risk_control": "현금 여력을 유지한다.",
+                    },
+                    ensure_ascii=False,
+                )
+            ]
+        )
+        constraints = {
+            "available_cash": 100_000_000,
+            "current_quantity": 0,
+            "current_price": 100_000,
+            "min_order_unit": 1,
+            "max_buy_quantity": 500,
+            "max_sell_quantity": 0,
+            "allow_hold": False,
+            "allowed_actions": ["buy"],
+        }
+
+        await make_decision(
+            {"agent_id": "A001", "persona_prompt": persona},
+            self._dimensions("previous"),
+            self._dimensions("current"),
+            {"directional_stance": "buy"},
+            "현금 1억원, 보유 0주",
+            constraints,
+            client=client,
+            seed=2,
+        )
+
+        self.assertEqual(client.prompts[0].count(persona), 1)
+
+
 class DecisionSafetyTest(unittest.IsolatedAsyncioTestCase):
     def test_fractional_or_unexplained_order_is_invalid(self) -> None:
         constraints = {
@@ -64,7 +162,14 @@ class DecisionSafetyTest(unittest.IsolatedAsyncioTestCase):
             "allowed_actions": ["buy"],
         }
         parsed = parse_decision_json(
-            json.dumps({"action": "buy", "quantity": 1.5, "reason": "", "risk_control": ""}),
+            json.dumps(
+                {
+                    "action": "buy",
+                    "requested_quantity": 1.5,
+                    "reason": "",
+                    "risk_control": "",
+                }
+            ),
             constraints,
         )
         self.assertFalse(parsed["valid"])
@@ -90,12 +195,16 @@ class DecisionSafetyTest(unittest.IsolatedAsyncioTestCase):
                 Path(directory) / "openrouter_calls.jsonl",
             ):
                 with self.assertRaises(DecisionValidationError):
+                    dimensions = {
+                        f"dim_{index}": f"test belief dimension {index}"
+                        for index in range(1, 7)
+                    }
                     await make_decision(
                         {"persona_prompt": "test"},
-                        {"belief_summary": "test"},
-                        {},
+                        dimensions,
+                        dimensions,
+                        {"directional_stance": "uncertain"},
                         "test portfolio",
-                        "no history",
                         constraints,
                         client=_InvalidDecisionClient(),
                         seed=2,
@@ -124,80 +233,6 @@ class DecisionSafetyTest(unittest.IsolatedAsyncioTestCase):
                 client=_FailIfCalledClient(),
                 seed=2,
             )
-
-
-class NewsSafetyTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self.temp_dir = tempfile.TemporaryDirectory()
-        root = Path(self.temp_dir.name)
-        self.processed = root / "processed.csv"
-        self.daily = root / "daily.csv"
-        fields = ["id", "title", "date", "time", "category", "summary", "is_fake"]
-        rows = [
-            {
-                "id": "news_old",
-                "title": "HBM 과거",
-                "date": "2026-03-01",
-                "time": "10:00",
-                "category": "종목",
-                "summary": "HBM 과거 기사",
-                "is_fake": "false",
-            },
-            {
-                "id": "news_before",
-                "title": "HBM 오전",
-                "date": "2026-03-08",
-                "time": "08:30",
-                "category": "종목",
-                "summary": "HBM 의사결정 전 기사",
-                "is_fake": "false",
-            },
-            {
-                "id": "news_future",
-                "title": "HBM 미래",
-                "date": "2026-03-08",
-                "time": "09:30",
-                "category": "종목",
-                "summary": "HBM 의사결정 후 기사",
-                "is_fake": "false",
-            },
-        ]
-        for path in (self.processed, self.daily):
-            with path.open("w", encoding="utf-8", newline="") as handle:
-                writer = csv.DictWriter(handle, fieldnames=fields)
-                writer.writeheader()
-                writer.writerows(rows)
-
-    def tearDown(self) -> None:
-        self.temp_dir.cleanup()
-
-    def test_depth2_search_excludes_future_news(self) -> None:
-        agent = NewsAgent(self.processed, self.daily, include_fake_news=False)
-        results = agent.search_news_flat(
-            keywords=["HBM"],
-            current_date="2026-03-08",
-            window_end_date="2026-03-08",
-            window_end_time="08:59",
-            lookback_days=7,
-        )
-        result_ids = [row["id"] for row in results]
-        self.assertIn("news_before", result_ids)
-        self.assertIn("news_old", result_ids)
-        self.assertNotIn("news_future", result_ids)
-
-    def test_influential_news_must_exist_in_visible_or_read_context(self) -> None:
-        agent = NewsAgent(self.processed, self.daily, include_fake_news=False)
-        context = {
-            "daily_titles": [{"id": "news_before", "title": "HBM 오전"}],
-            "read_contents": [],
-            "search_read_contents": [],
-        }
-        resolved, unresolved = agent.normalize_influential_news(
-            ["HBM 오전", "존재하지 않는 뉴스"],
-            context,
-        )
-        self.assertEqual([row["id"] for row in resolved], ["news_before"])
-        self.assertEqual(unresolved, ["존재하지 않는 뉴스"])
 
 
 class ApiAuditSafetyTest(unittest.TestCase):

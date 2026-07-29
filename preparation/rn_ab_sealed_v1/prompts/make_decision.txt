@@ -34,6 +34,7 @@
 
 【Step 1: 방향 결정 — 살 것인가, 팔 것인가?】
 오늘의 Belief와 시장 분석, 현재 포트폴리오를 바탕으로 삼성전자에 대한 방향을 정하세요.
+- 이전 Long-Term Belief와 오늘의 Short-Term Belief를 단순히 이어 붙이거나 Short-Term Belief만 따르지 말고, 같은 차원의 일치·충돌을 시장 분석과 함께 종합하세요.
 - action은 거래 제약의 allowed_actions 안에서만 선택할 수 있습니다.
 - allowed_actions가 ["buy"]이면 반드시 buy를 선택해야 합니다.
 - allowed_actions가 ["sell"]이면 반드시 sell을 선택해야 합니다.

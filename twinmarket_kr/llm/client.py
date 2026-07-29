@@ -21,7 +21,7 @@ except ModuleNotFoundError:
 import config
 
 if TYPE_CHECKING:
-    from twinmarket_kr.rn_ab.call_policy import StrictCallPolicy
+    from twinmarket_kr.llm.call_policy import StrictCallPolicy
 
 
 class UnexpectedModelError(RuntimeError):
@@ -84,6 +84,41 @@ def _audit_context(value: Mapping[str, str] | None) -> dict[str, str]:
 def stable_llm_seed(base_seed: int, *parts: object) -> int:
     payload = "|".join([str(base_seed), *(str(part) for part in parts)])
     return int.from_bytes(hashlib.sha256(payload.encode("utf-8")).digest()[:4], "big") & 0x7FFFFFFF
+
+
+def validate_experiment_call_policy() -> dict[str, Any]:
+    """Fail before an experiment can send a non-baseline OpenRouter request."""
+    errors: list[str] = []
+    if config.OPENROUTER_MODEL != config.PAPER_OPENROUTER_MODEL:
+        errors.append(
+            f"OPENROUTER_MODEL must be {config.PAPER_OPENROUTER_MODEL!r}"
+        )
+    if config.OPENROUTER_COMMUNITY_MODEL != config.PAPER_OPENROUTER_MODEL:
+        errors.append(
+            f"OPENROUTER_COMMUNITY_MODEL must be {config.PAPER_OPENROUTER_MODEL!r}"
+        )
+    if not config.OPENROUTER_REQUIRE_PARAMETERS:
+        errors.append("OPENROUTER_REQUIRE_PARAMETERS must be true")
+    if config.OPENROUTER_ALLOW_FALLBACKS:
+        errors.append("OPENROUTER_ALLOW_FALLBACKS must be false")
+    expected_providers = [config.PAPER_OPENROUTER_PROVIDER]
+    if config.OPENROUTER_PROVIDER_ORDER != expected_providers:
+        errors.append(
+            "OPENROUTER_PROVIDER_ORDER must contain only "
+            f"{config.PAPER_OPENROUTER_PROVIDER!r}"
+        )
+    if errors:
+        raise ReasoningPolicyError("; ".join(errors))
+    return {
+        "model": config.PAPER_OPENROUTER_MODEL,
+        "reasoning": dict(_PAPER_REASONING_OFF_BODY),
+        "provider": {
+            "only": expected_providers,
+            "order": expected_providers,
+            "allow_fallbacks": False,
+            "require_parameters": True,
+        },
+    }
 
 
 class OpenRouterClient:
@@ -150,6 +185,7 @@ class OpenRouterClient:
         }
         if config.OPENROUTER_PROVIDER_ORDER:
             provider["order"] = list(config.OPENROUTER_PROVIDER_ORDER)
+            provider["only"] = list(config.OPENROUTER_PROVIDER_ORDER)
         policy: dict[str, Any] = {"provider": provider}
         if self.model == config.PAPER_REASONING_DISABLED_MODEL:
             # This exact object is sent under ``extra_body`` by ``chat``.
@@ -194,6 +230,15 @@ class OpenRouterClient:
         normalized_max_tokens = (
             None if max_tokens is None else _positive_int(max_tokens, "max_tokens")
         )
+        if (
+            not self.offline
+            and getattr(self, "audit_context", {}).get("artifact")
+            == "integrated_experiment_openrouter_attempt"
+            and normalized_max_tokens is None
+        ):
+            raise ValueError(
+                "Integrated production calls require an explicit max_tokens budget"
+            )
         if normalized_max_tokens is not None:
             kwargs["max_tokens"] = normalized_max_tokens
         supplied_request_policy = (
@@ -324,7 +369,7 @@ class OpenRouterClient:
         # the stage adapter.  A future direct caller of this RN-only method
         # must not be able to silently omit the response-format contract or
         # tune sampling while still receiving a strict reasoning-off policy.
-        from twinmarket_kr.rn_ab.call_policy import (
+        from twinmarket_kr.llm.call_policy import (
             RN_STRICT_RESPONSE_FORMAT,
             RN_STRICT_TEMPERATURE,
         )
@@ -614,7 +659,11 @@ def _record_api_audit(
     is_rn_experiment_attempt = bool(
         logical_call_id
         and phase_attempt_id
-        and context.get("artifact") == "rn_ab_strict_openrouter_attempt"
+        and context.get("artifact")
+        in {
+            "rn_ab_strict_openrouter_attempt",
+            "integrated_experiment_openrouter_attempt",
+        }
     )
     payload = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
@@ -899,6 +948,138 @@ async def _global_openrouter_slot(limit: int, *, slot_namespace: str | None = No
 
 def _offline_response(messages: list[dict[str, str]]) -> str:
     prompt = messages[-1].get("content", "") if messages else ""
+    if '"schema_version": "simulation-stb-input-v1"' in prompt:
+        payload = _extract_json_after_label(prompt, "입력 정보(JSON):")
+        evidence_ids = [
+            str(value)
+            for value in payload.get("sanitized_evidence_registry", [])
+            if str(value)
+        ]
+        first_id = evidence_ids[:1]
+        dimension_evidence = {
+            f"dim_{index}": {
+                "support": list(first_id),
+                "contradict": [],
+            }
+            for index in range(1, 7)
+        }
+        return json.dumps(
+            {
+                "dim_1": "현재 정보는 한 달 방향을 단정하기 어려워 신중한 관점을 지지한다.",
+                "dim_2": "현재 정보만으로 밸류에이션의 고평가 여부를 확정하기 어렵다.",
+                "dim_3": "거시와 반도체 업황 신호를 계속 확인해야 한다.",
+                "dim_4": "현재 투자 심리는 한 방향보다 혼조에 가깝다.",
+                "dim_5": "새 정보는 과신보다 제한적인 대응이 필요함을 시사한다.",
+                "dim_6": "현재 정보의 한계를 인정하고 판단 과신을 경계해야 한다.",
+                "dimension_evidence": dimension_evidence,
+            },
+            ensure_ascii=False,
+        )
+    if '"schema_version": "simulation-post-fill-ltb-input-v1"' in prompt:
+        payload = _extract_json_after_label(prompt, "입력 정보(JSON):")
+        current_stb = payload.get("current_stb") or {}
+        raw_evidence = current_stb.get("dimension_evidence") or {}
+        integration_evidence = {
+            f"dim_{index}": {
+                "support": list(
+                    (raw_evidence.get(f"dim_{index}") or {}).get("support") or []
+                ),
+                "contradict": list(
+                    (raw_evidence.get(f"dim_{index}") or {}).get("contradict") or []
+                ),
+            }
+            for index in range(1, 7)
+        }
+        due_outcomes = payload.get("eligible_price_outcomes_dim_6_only") or []
+        # Keep the offline smoke stub subject to the same scientific evidence
+        # contract as a live response. Positive action-aligned markouts support
+        # the prior action, negative markouts contradict it, and an exactly
+        # flat outcome is consumed in support by deterministic convention.
+        from twinmarket_kr.outcome_schedule import outcome_evidence_relation
+
+        for row in due_outcomes:
+            if not isinstance(row, dict) or not row.get("outcome_id"):
+                continue
+            relation = (
+                outcome_evidence_relation(
+                    row.get("action_aligned_markout")
+                )
+                or "support"
+            )
+            integration_evidence["dim_6"][relation].append(
+                str(row["outcome_id"])
+            )
+        event = payload.get("event") or {}
+        turn = int(event.get("turn") or 0)
+        return json.dumps(
+            {
+                "dim_1": f"{turn}번째 정보까지 통합해 한 달 방향을 신중하게 본다.",
+                "dim_2": f"{turn}번째 판단에서도 밸류에이션 확신을 제한한다.",
+                "dim_3": f"{turn}번째 갱신 후에도 거시와 업황 확인을 이어간다.",
+                "dim_4": f"{turn}번째 갱신에서 시장 심리를 혼조로 본다.",
+                "dim_5": f"{turn}번째 새 정보를 누적 관점에 선별적으로 반영한다.",
+                "dim_6": f"{turn}번째 실제 체결과 도래한 성과를 바탕으로 과신을 경계한다.",
+                "integration_evidence": integration_evidence,
+            },
+            ensure_ascii=False,
+        )
+    if '"schema_version": "simulation-analysis-input-v1"' in prompt:
+        payload = _extract_json_after_label(prompt, "입력 정보(JSON):")
+        market = payload.get("market") or {}
+        execution_state = payload.get("execution_state") or {}
+        market_field = next(iter(market), "close")
+        execution_field = next(iter(execution_state), "available_cash")
+        return json.dumps(
+            {
+                "market_view": "현재 신호는 혼조로 해석한다.",
+                "valuation_view": "현재 가격만으로 저평가 여부를 단정하지 않는다.",
+                "technical_view": "가격과 거래량 신호를 함께 확인해야 한다.",
+                "news_view": "뉴스 영향은 긍정과 부정이 섞여 있다.",
+                "portfolio_view": "실행 가능한 범위에서 제한적으로 대응한다.",
+                "key_risks": ["변동성", "정보 불확실성"],
+                "opportunity": ["과도하지 않은 제한적 대응"],
+                "caution": ["집중 위험을 피한다"],
+                "confidence": "medium",
+                "directional_stance": "uncertain",
+                "evidence_references": [
+                    {"source": "previous_ltb", "field": "dim_1"},
+                    {"source": "current_stb", "field": "dim_1"},
+                    {"source": "market", "field": market_field},
+                    {"source": "execution_state", "field": execution_field},
+                ],
+            },
+            ensure_ascii=False,
+        )
+    if '"schema_version": "simulation-decision-input-v1"' in prompt:
+        payload = _extract_json_after_label(prompt, "입력 정보(JSON):")
+        constraints = payload.get("execution_state") or {}
+        allowed = list(constraints.get("allowed_actions") or ["buy"])
+        action = "buy" if "buy" in allowed else "sell"
+        max_quantity = int(
+            constraints.get(
+                "max_buy_quantity" if action == "buy" else "max_sell_quantity"
+            )
+            or 1
+        )
+        return json.dumps(
+            {
+                "action": action,
+                "requested_quantity": max(1, min(max_quantity, 10)),
+                "reason": "두 belief와 실행 제약을 함께 고려한 제한적 거래다.",
+                "risk_control": "현금과 보유량 제약 안에서 수량을 제한한다.",
+            },
+            ensure_ascii=False,
+        )
+    if "observed_sentiment" in prompt and "source_exposure_id" in prompt:
+        return json.dumps(
+            {
+                "observed_sentiment": "uncertain",
+                "claims": [],
+                "agreement_disagreement": "검증 가능한 주장 없이 분위기만 관찰했다.",
+                "uncertainty": "커뮤니티 글만으로 거래 방향을 단정하지 않는다.",
+            },
+            ensure_ascii=False,
+        )
     if "[모드: react]" in prompt:
         post_ids = [int(value) for value in re.findall(r"post_id=(\d+)", prompt)]
         reactions = [
@@ -932,7 +1113,7 @@ def _offline_response(messages: list[dict[str, str]]) -> str:
         return json.dumps(
             {
                 "action": action,
-                "quantity": quantity,
+                "requested_quantity": quantity,
                 "reason": "Offline smoke run: mixed signals justify a small constrained trade.",
                 "risk_control": "Keep position size small and preserve cash for later turns.",
             },

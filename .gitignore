@@ -16,6 +16,8 @@ outputs/analysis/
 outputs/experiment_base_sim.db
 outputs/experiment_base_sim.report.json
 outputs/.openrouter_slots/
+outputs/openrouter_calls.jsonl
+outputs/llm_validation_errors.jsonl
 outputs/logs/paper_*/
 outputs/crawl/
 # split 재생성 전 스냅샷. 재현은 crawl -> build_splits 로 하므로 저장소에 두지 않는다.

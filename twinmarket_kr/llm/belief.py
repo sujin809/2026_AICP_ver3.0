@@ -2,11 +2,23 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import config
-from twinmarket_kr.agents.memory_agent import MemoryAgent
+from twinmarket_kr.llm.call_policy import (
+    INTEGRATED_STAGE_MAX_TOKENS_V1,
+    INTEGRATED_STAGE_SCHEMA_VERSIONS_V1,
+)
 from twinmarket_kr.llm.client import OpenRouterClient, response_content, stable_llm_seed
+from twinmarket_kr.llm.response_journal import (
+    ResponseJournalError,
+    open_journal_call,
+    parse_strict_json_object,
+)
+from twinmarket_kr.outcome_schedule import (
+    OutcomeScheduleError,
+    outcome_evidence_relation,
+)
 from twinmarket_kr.llm.validation import (
     LLMValidationError,
     build_validation_retry_prompt,
@@ -14,7 +26,8 @@ from twinmarket_kr.llm.validation import (
 )
 
 
-BELIEF_KEYS = ("dim_1", "dim_2", "dim_3", "dim_4", "dim_5", "dim_6", "belief_summary", "view_change")
+BELIEF_DIMENSION_KEYS = ("dim_1", "dim_2", "dim_3", "dim_4", "dim_5", "dim_6")
+BELIEF_EVIDENCE_RELATIONS = ("support", "contradict")
 
 
 class BeliefValidationError(LLMValidationError):
@@ -25,140 +38,516 @@ def load_prompt(name: str) -> str:
     return (config.PROMPT_DIR / name).read_text(encoding="utf-8")
 
 
+def render_prompt(name: str, /, **values: Any) -> str:
+    """Render named prompt slots without interpreting JSON braces.
+
+    The production prompts contain literal JSON examples.  ``str.format``
+    treats those braces as replacement fields and made the old and strict
+    prompt paths incompatible.  Production rendering now replaces only the
+    explicitly named slots supplied by the caller.
+    """
+
+    prompt = load_prompt(name)
+    for key, value in values.items():
+        prompt = prompt.replace("{" + key + "}", str(value))
+    return prompt
+
+
 def _limits() -> dict[str, int]:
     return {f"{key}_limit": value for key, value in config.BELIEF_LIMITS.items()}
 
 
-def parse_belief_json(content: str) -> dict[str, str]:
+def belief_dimensions(value: Mapping[str, Any], *, label: str = "belief") -> dict[str, str]:
+    dimensions: dict[str, str] = {}
+    for key in BELIEF_DIMENSION_KEYS:
+        raw = value.get(key)
+        if not isinstance(raw, str) or not raw.strip():
+            raise BeliefValidationError(f"{label}.{key} must be a non-empty string")
+        text = raw.strip()
+        limit = int(config.BELIEF_LIMITS[key])
+        if len(text) > limit:
+            raise BeliefValidationError(
+                f"{label}.{key} exceeds the {limit}-character limit"
+            )
+        dimensions[key] = text
+    return dimensions
+
+
+def _parse_json_mapping(content: str) -> dict[str, Any]:
     text = content.strip()
     if text.startswith("```"):
         text = text.strip("`")
         if text.startswith("json"):
             text = text[4:].strip()
     try:
-        data = json.loads(text or "{}")
+        value = json.loads(text or "{}")
     except json.JSONDecodeError:
-        data = {}
-    if not isinstance(data, dict):
-        data = {}
-    for key in BELIEF_KEYS:
-        data.setdefault(key, "")
-    return {
-        key: str(data[key]) if isinstance(data[key], (str, int, float)) and not isinstance(data[key], bool) else ""
-        for key in BELIEF_KEYS
-    }
+        return {}
+    return dict(value) if isinstance(value, dict) else {}
 
 
-def offline_initial_belief(agent: dict[str, Any]) -> dict[str, str]:
-    strategy = agent.get("strategy", "value")
-    if strategy == "technical":
-        dim_2 = "기술적 흐름과 거래량 신호가 확인되기 전까지 중립적으로 본다."
-    else:
-        dim_2 = "대형 우량주로서 장기 가치는 보지만 현재 가격의 저평가 여부를 확인해야 한다."
-    return {
-        "dim_1": "초기에는 삼성전자의 한 달 방향을 중립으로 보며 확인된 신호를 기다린다.",
-        "dim_2": dim_2,
-        "dim_3": "반도체 업황, 환율, 금리 흐름이 판단의 핵심 변수다.",
-        "dim_4": "시장 심리가 과열되면 신중하고, 위축되면 기회를 찾는 태도다.",
-        "dim_5": "뉴스는 제목과 핵심 내용을 확인하되 자신의 투자 성향에 맞게 해석한다.",
-        "dim_6": "초기 판단에는 불확실성이 있어 현금 관리와 원칙 준수를 중시한다.",
-        "belief_summary": "초기에는 삼성전자에 대해 중립적 관점을 유지한다. 페르소나상 투자 전략에 맞춰 시장 데이터와 뉴스를 확인한 뒤 방향성을 조정할 것이다.",
-        "view_change": "initial",
-    }
-
-
-async def generate_initial_belief(
-    agent: dict[str, Any],
+def _normalize_dimension_evidence(
+    value: Any,
     *,
-    client: OpenRouterClient | None = None,
-    memory: MemoryAgent | None = None,
-    date: str = "t000",
-    offline: bool = False,
-) -> dict[str, Any]:
-    if offline:
-        parsed = offline_initial_belief(agent)
-    else:
-        client = client or OpenRouterClient()
-        prompt = load_prompt("initial_belief.txt").format(
-            persona_prompt=agent["persona_prompt"],
-            **_limits(),
-        )
-        response = await client.chat(
-            [{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-            temperature=0.2,
-            audit_label="initial_belief",
-        )
-        parsed = parse_belief_json(response_content(response) or "{}")
-    belief = {"agent_id": agent["agent_id"], "turn": 0, "date": date, **parsed}
-    if memory is not None:
-        memory.save_belief(belief)
-    return belief
+    field: str,
+    allowed_ids_by_dimension: Mapping[str, set[str]],
+) -> tuple[dict[str, dict[str, list[str]]], list[str]]:
+    errors: list[str] = []
+    if not isinstance(value, Mapping):
+        return {}, [f"{field}:requires_object"]
+    missing = set(BELIEF_DIMENSION_KEYS) - set(value)
+    unknown = set(value) - set(BELIEF_DIMENSION_KEYS)
+    if missing:
+        errors.append(f"{field}:missing_dimensions:{sorted(missing)}")
+    if unknown:
+        errors.append(f"{field}:unknown_dimensions:{sorted(unknown)}")
+    normalized: dict[str, dict[str, list[str]]] = {}
+    for dimension in BELIEF_DIMENSION_KEYS:
+        relations = value.get(dimension)
+        if not isinstance(relations, Mapping):
+            errors.append(f"{field}.{dimension}:requires_object")
+            continue
+        if set(relations) != set(BELIEF_EVIDENCE_RELATIONS):
+            errors.append(
+                f"{field}.{dimension}:requires_exact_support_contradict"
+            )
+            continue
+        normalized[dimension] = {}
+        for relation in BELIEF_EVIDENCE_RELATIONS:
+            rows = relations.get(relation)
+            if not isinstance(rows, list) or any(
+                not isinstance(item, str) or not item.strip() for item in rows
+            ):
+                errors.append(
+                    f"{field}.{dimension}.{relation}:requires_string_array"
+                )
+                continue
+            ids = [item.strip() for item in rows]
+            if len(ids) != len(set(ids)):
+                errors.append(f"{field}.{dimension}.{relation}:duplicate_ids")
+            unknown_ids = set(ids) - set(allowed_ids_by_dimension.get(dimension, set()))
+            if unknown_ids:
+                errors.append(
+                    f"{field}.{dimension}.{relation}:unknown_ids:{sorted(unknown_ids)}"
+                )
+            normalized[dimension][relation] = ids
+        support = set(normalized[dimension].get("support", []))
+        contradict = set(normalized[dimension].get("contradict", []))
+        if support & contradict:
+            errors.append(f"{field}.{dimension}:same_id_in_both_relations")
+    return normalized, errors
 
 
-async def update_belief(
-    agent: dict[str, Any],
-    today_context: dict[str, Any],
+async def _generate_hierarchical_belief(
     *,
-    client: OpenRouterClient | None = None,
-    memory: MemoryAgent | None = None,
-    seed: int | None = None,
-    validation_attempts: int = 4,
+    prompt_name: str,
+    prompt_payload: Mapping[str, Any],
+    evidence_field: str,
+    allowed_ids_by_dimension: Mapping[str, set[str]],
+    audit_label: str,
+    client: OpenRouterClient,
+    seed: int | None,
+    validation_attempts: int,
+    previous_dimensions: Mapping[str, str] | None = None,
+    required_dim_6_outcome_ids: set[str] | None = None,
+    fixed_relations_by_dimension: Mapping[
+        str,
+        Mapping[str, set[str]],
+    ]
+    | None = None,
 ) -> dict[str, Any]:
-    client = client or OpenRouterClient()
-    prompt = load_prompt("update_belief.txt").format(
-        persona_prompt=agent["persona_prompt"],
-        today_context=json.dumps(today_context, ensure_ascii=False, indent=2),
-        **_limits(),
-    )
     if validation_attempts < 1:
         raise ValueError("validation_attempts must be at least 1")
-    parsed: dict[str, str] | None = None
+    prompt = render_prompt(prompt_name, **_limits()).replace(
+        "<<STAGE_PAYLOAD_JSON>>",
+        json.dumps(prompt_payload, ensure_ascii=False, indent=2),
+    )
+    required_keys = {*BELIEF_DIMENSION_KEYS, evidence_field}
     invalid_history: list[list[str]] = []
     current_prompt = prompt
-    for attempt in range(1, validation_attempts + 1):
-        attempt_seed = stable_llm_seed(seed or 0, "belief_validation", attempt)
-        response = await client.chat(
-            [{"role": "user", "content": current_prompt}],
-            response_format={"type": "json_object"},
-            temperature=0.2 if attempt == 1 else 0.1,
-            seed=attempt_seed,
-            audit_label="belief_update",
+    temperatures = [
+        0.2 if attempt == 1 else 0.1
+        for attempt in range(1, validation_attempts + 1)
+    ]
+    seeds = [
+        stable_llm_seed(seed or 0, audit_label, attempt)
+        for attempt in range(1, validation_attempts + 1)
+    ]
+    max_tokens = int(INTEGRATED_STAGE_MAX_TOKENS_V1[audit_label])
+    journal_call = open_journal_call(
+        stage=audit_label,
+        schema_version=INTEGRATED_STAGE_SCHEMA_VERSIONS_V1[audit_label],
+        base_prompt=prompt,
+        client=client,
+        temperature_schedule=temperatures,
+        seed_schedule=seeds,
+        max_tokens=max_tokens,
+        validation_attempts=validation_attempts,
+        validation_procedure_version=f"{audit_label}-validator-v2",
+        response_format={"type": "json_object"},
+        semantic_inputs={
+            "evidence_field": evidence_field,
+            "allowed_ids_by_dimension": {
+                key: sorted(value)
+                for key, value in allowed_ids_by_dimension.items()
+            },
+            "required_dim_6_outcome_ids": sorted(
+                required_dim_6_outcome_ids or set()
+            ),
+            "fixed_relations_by_dimension": {
+                dimension: {
+                    relation: sorted(ids)
+                    for relation, ids in relations.items()
+                }
+                for dimension, relations in (
+                    fixed_relations_by_dimension or {}
+                ).items()
+            },
+        },
+    )
+
+    def _validate(
+        raw: Mapping[str, Any],
+    ) -> tuple[dict[str, str], dict[str, dict[str, list[str]]], list[str]]:
+        errors: list[str] = []
+        if set(raw) != required_keys:
+            errors.append(
+                "top_level_keys:"
+                f"missing={sorted(required_keys - set(raw))}:"
+                f"unknown={sorted(set(raw) - required_keys)}"
+            )
+        try:
+            dimensions = belief_dimensions(raw, label=audit_label)
+        except BeliefValidationError as exc:
+            dimensions = {}
+            errors.append(str(exc))
+        evidence, evidence_errors = _normalize_dimension_evidence(
+            raw.get(evidence_field),
+            field=evidence_field,
+            allowed_ids_by_dimension=allowed_ids_by_dimension,
         )
+        errors.extend(evidence_errors)
+        fixed_relations = fixed_relations_by_dimension or {}
+        if evidence:
+            for dimension in BELIEF_DIMENSION_KEYS:
+                relations = fixed_relations.get(dimension, {})
+                for relation in BELIEF_EVIDENCE_RELATIONS:
+                    opposite = (
+                        "contradict"
+                        if relation == "support"
+                        else "support"
+                    )
+                    flipped_ids = set(relations.get(relation, set())) & set(
+                        evidence.get(dimension, {}).get(opposite, [])
+                    )
+                    if flipped_ids:
+                        errors.append(
+                            f"{evidence_field}.{dimension}:"
+                            "must_preserve_evidence_relation:"
+                            f"{relation}_moved_to_{opposite}:"
+                            f"{sorted(flipped_ids)}"
+                        )
+        if previous_dimensions is not None and dimensions:
+            unchanged = [
+                key
+                for key in BELIEF_DIMENSION_KEYS
+                if dimensions[key] == previous_dimensions[key]
+            ]
+            if unchanged:
+                errors.append(
+                    "all_ltb_dimensions_must_be_recursively_rewritten:"
+                    + ",".join(unchanged)
+                )
+        due_ids = required_dim_6_outcome_ids or set()
+        if due_ids and evidence:
+            cited = [
+                evidence_id
+                for relation in BELIEF_EVIDENCE_RELATIONS
+                for evidence_id in evidence["dim_6"][relation]
+                if evidence_id in due_ids
+            ]
+            if len(cited) != len(set(cited)) or set(cited) != due_ids:
+                errors.append("every_due_outcome_must_be_cited_once_in_dim_6")
+        return dimensions, evidence, errors
+
+    if journal_call is not None and journal_call.replay is not None:
+        raw = dict(journal_call.replay.response)
+        dimensions, evidence, errors = _validate(raw)
+        if errors:
+            raise ResponseJournalError(
+                f"accepted replay no longer passes {audit_label}: {errors}"
+            )
+        journal_call.repair_replay_acceptance(client=client)
+        return {
+            **dimensions,
+            evidence_field: evidence,
+            "generation_attempts": journal_call.replay.validation_attempt,
+        }
+
+    for attempt in range(1, validation_attempts + 1):
+        attempt_seed = seeds[attempt - 1]
+        if journal_call is not None:
+            journal_call.begin(attempt)
+        try:
+            response = await client.chat(
+                [{"role": "user", "content": current_prompt}],
+                response_format={"type": "json_object"},
+                temperature=temperatures[attempt - 1],
+                seed=attempt_seed,
+                max_tokens=max_tokens,
+                audit_label=audit_label,
+                logical_call_id=(
+                    journal_call.logical_call_id
+                    if journal_call is not None
+                    else None
+                ),
+                phase_attempt_id=(
+                    journal_call.phase_attempt_id
+                    if journal_call is not None
+                    else None
+                ),
+            )
+        except BaseException as exc:
+            if journal_call is not None:
+                journal_call.error(attempt, exc)
+            raise
         raw_content = response_content(response) or "{}"
-        candidate = parse_belief_json(raw_content)
-        errors = [key for key in BELIEF_KEYS if not candidate.get(key, "").strip()]
+        parse_errors: list[str] = []
+        raw: dict[str, Any] | None
+        try:
+            raw = (
+                parse_strict_json_object(raw_content)
+                if journal_call is not None
+                else _parse_json_mapping(raw_content)
+            )
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            raw = None
+            parse_errors.append(f"strict_json_object:{exc}")
+        dimensions, evidence, errors = _validate(raw or {})
+        errors = [*parse_errors, *errors]
         if not errors:
-            parsed = candidate
-            break
+            if journal_call is not None:
+                if raw is None:
+                    raise AssertionError("validated response has no raw JSON object")
+                journal_call.accept(raw, attempt, client=client)
+            return {
+                **dimensions,
+                evidence_field: evidence,
+                "generation_attempts": attempt,
+            }
+        if journal_call is not None:
+            journal_call.rejected(
+                attempt,
+                response=raw,
+                errors=errors,
+            )
         invalid_history.append(errors)
         record_validation_failure(
-            label="belief_update",
+            label=audit_label,
             attempt=attempt,
-            errors=[f"{key}:requires_nonempty_string" for key in errors],
+            errors=errors,
             raw_content=raw_content,
             seed=attempt_seed,
         )
         current_prompt = build_validation_retry_prompt(
             prompt,
-            errors=[f"{key}:requires_nonempty_string" for key in errors],
+            errors=errors,
             schema_hint=(
-                "dim_1부터 dim_6, belief_summary, view_change를 모두 "
-                "비어 있지 않은 문자열로 출력하세요."
+                "dim_1부터 dim_6까지의 비어 있지 않은 문자열과 "
+                f"{evidence_field}만 가진 JSON object를 출력하세요."
             ),
         )
-    if parsed is None:
-        raise BeliefValidationError(
-            "LLM did not produce a complete belief after "
-            f"{validation_attempts} validation attempts; empty keys={invalid_history}"
-        )
-    belief = {
-        "agent_id": agent["agent_id"],
-        "turn": int(today_context["turn"]),
-        "date": today_context["date"],
-        "generation_attempts": len(invalid_history) + 1,
-        **parsed,
+    raise BeliefValidationError(
+        f"{audit_label} failed after {validation_attempts} attempts: {invalid_history}"
+    )
+
+
+async def generate_short_term_belief(
+    agent: Mapping[str, Any],
+    *,
+    event: Mapping[str, Any],
+    current_evidence: Mapping[str, Any],
+    allowed_evidence_ids: set[str],
+    client: OpenRouterClient | None = None,
+    seed: int | None = None,
+    validation_attempts: int = 4,
+) -> dict[str, Any]:
+    """Create the current-turn STB from news/community evidence only."""
+
+    client = client or OpenRouterClient()
+    payload = {
+        "schema_version": "simulation-stb-input-v1",
+        "persona": {
+            "agent_id": str(agent["agent_id"]),
+            "news_depth": int(agent.get("news_depth") or 0),
+            "persona_prompt": str(agent["persona_prompt"]),
+        },
+        "event": dict(event),
+        "current_evidence": dict(current_evidence),
+        "sanitized_evidence_registry": sorted(allowed_evidence_ids),
     }
-    if memory is not None:
-        memory.save_belief(belief)
-    return belief
+    allowed = {
+        dimension: set(allowed_evidence_ids)
+        for dimension in BELIEF_DIMENSION_KEYS
+    }
+    return await _generate_hierarchical_belief(
+        prompt_name="update_short_term_belief.txt",
+        prompt_payload=payload,
+        evidence_field="dimension_evidence",
+        allowed_ids_by_dimension=allowed,
+        audit_label="short_term_belief",
+        client=client,
+        seed=seed,
+        validation_attempts=validation_attempts,
+    )
+
+
+def render_ltb_human_log(
+    *,
+    previous_dimensions: Mapping[str, str],
+    current_dimensions: Mapping[str, str],
+) -> tuple[str, dict[str, dict[str, str]]]:
+    """Derive non-causal human log fields from committed six-dimensional state."""
+
+    summary = "\n".join(
+        f"{dimension}: {current_dimensions[dimension]}"
+        for dimension in BELIEF_DIMENSION_KEYS
+    )
+    view_change = {
+        dimension: {
+            "before": previous_dimensions[dimension],
+            "after": current_dimensions[dimension],
+        }
+        for dimension in BELIEF_DIMENSION_KEYS
+    }
+    return summary, view_change
+
+
+async def update_long_term_belief(
+    agent: Mapping[str, Any],
+    *,
+    event: Mapping[str, Any],
+    previous_ltb: Mapping[str, Any],
+    current_stb: Mapping[str, Any],
+    transaction_episode: Mapping[str, Any],
+    eligible_price_outcomes_dim_6_only: list[Mapping[str, Any]] | None = None,
+    client: OpenRouterClient | None = None,
+    seed: int | None = None,
+    validation_attempts: int = 4,
+) -> dict[str, Any]:
+    """Recursively create LTB_t after the same-turn actual fill is committed."""
+
+    client = client or OpenRouterClient()
+    previous_dimensions = belief_dimensions(
+        previous_ltb.get("dimensions", previous_ltb),
+        label="previous_ltb",
+    )
+    current_dimensions = belief_dimensions(
+        current_stb.get("dimensions", current_stb),
+        label="current_stb",
+    )
+    raw_stb_evidence = current_stb.get("dimension_evidence") or {}
+    normalized_stb_evidence, stb_errors = _normalize_dimension_evidence(
+        raw_stb_evidence,
+        field="current_stb.dimension_evidence",
+        allowed_ids_by_dimension={
+            key: {
+                str(item)
+                for relation in BELIEF_EVIDENCE_RELATIONS
+                for item in (
+                    raw_stb_evidence.get(key, {}).get(relation, [])
+                    if isinstance(raw_stb_evidence, Mapping)
+                    and isinstance(raw_stb_evidence.get(key), Mapping)
+                    else []
+                )
+            }
+            for key in BELIEF_DIMENSION_KEYS
+        },
+    )
+    if stb_errors:
+        raise BeliefValidationError(
+            "current STB evidence is invalid: " + "; ".join(stb_errors)
+        )
+    outcomes = [dict(item) for item in (eligible_price_outcomes_dim_6_only or [])]
+    outcome_id_list = [
+        str(item.get("outcome_id") or "").strip()
+        for item in outcomes
+    ]
+    if any(not outcome_id for outcome_id in outcome_id_list):
+        raise BeliefValidationError(
+            "every eligible price outcome must have a non-empty outcome_id"
+        )
+    if len(outcome_id_list) != len(set(outcome_id_list)):
+        raise BeliefValidationError(
+            "eligible price outcomes contain duplicate outcome_id values"
+        )
+    outcome_ids = set(outcome_id_list)
+    allowed_by_dimension = {
+        dimension: {
+            evidence_id
+            for relation in BELIEF_EVIDENCE_RELATIONS
+            for evidence_id in normalized_stb_evidence[dimension][relation]
+        }
+        for dimension in BELIEF_DIMENSION_KEYS
+    }
+    allowed_by_dimension["dim_6"].update(outcome_ids)
+    fixed_relations_by_dimension = {
+        dimension: {
+            relation: set(normalized_stb_evidence[dimension][relation])
+            for relation in BELIEF_EVIDENCE_RELATIONS
+        }
+        for dimension in BELIEF_DIMENSION_KEYS
+    }
+    for outcome in outcomes:
+        outcome_id = str(outcome["outcome_id"]).strip()
+        try:
+            relation = outcome_evidence_relation(
+                outcome.get("action_aligned_markout")
+            )
+        except OutcomeScheduleError as exc:
+            raise BeliefValidationError(
+                f"{outcome_id} has invalid action_aligned_markout"
+            ) from exc
+        if relation is not None:
+            fixed_relations_by_dimension["dim_6"][relation].add(outcome_id)
+    payload = {
+        "schema_version": "simulation-post-fill-ltb-input-v1",
+        "persona": {
+            "agent_id": str(agent["agent_id"]),
+            "news_depth": int(agent.get("news_depth") or 0),
+            "persona_prompt": str(agent["persona_prompt"]),
+        },
+        "event": dict(event),
+        "previous_ltb": previous_dimensions,
+        "current_stb": {
+            "dimensions": current_dimensions,
+            "dimension_evidence": normalized_stb_evidence,
+        },
+        "transaction_episode": dict(transaction_episode),
+        "eligible_price_outcomes_dim_6_only": outcomes,
+        "sanitized_evidence_registry": sorted(
+            set().union(*allowed_by_dimension.values())
+        ),
+    }
+    generated = await _generate_hierarchical_belief(
+        prompt_name="update_long_term_belief.txt",
+        prompt_payload=payload,
+        evidence_field="integration_evidence",
+        allowed_ids_by_dimension=allowed_by_dimension,
+        audit_label="post_fill_long_term_belief",
+        client=client,
+        seed=seed,
+        validation_attempts=validation_attempts,
+        previous_dimensions=previous_dimensions,
+        required_dim_6_outcome_ids=outcome_ids,
+        fixed_relations_by_dimension=fixed_relations_by_dimension,
+    )
+    summary, view_change = render_ltb_human_log(
+        previous_dimensions=previous_dimensions,
+        current_dimensions=generated,
+    )
+    return {
+        **generated,
+        "belief_summary": summary,
+        "view_change": view_change,
+    }

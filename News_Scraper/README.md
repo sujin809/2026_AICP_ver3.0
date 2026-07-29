@@ -1,6 +1,9 @@
 # News Scraper
 
-뉴스 원천 데이터를 만들기 위한 보조 스크립트 모음이다. 메인 시뮬레이션은 이 폴더를 직접 호출하지 않고, 최종적으로 `data/samsung_news_raw.pkl` 또는 그에 준하는 원천 pkl을 `scripts/02_prepare_news.py`가 읽는다.
+뉴스 원천 데이터를 만들기 위한 보조 수집 도구 모음이다. 이 폴더는 현재
+simulation runtime의 입력 경로가 아니다. 새 run은
+`preparation/rn_ab_sealed_v1/news.json`의 봉인된 실제뉴스 bundle만 읽으며,
+5/3/2 뉴스 노출 정책과 accepted shortage를 다시 보충하거나 재선발하지 않는다.
 
 ## 주요 파일
 
@@ -42,15 +45,11 @@ Playwright 기반 스크립트를 쓰는 경우 브라우저 설치가 추가로
 
 매경 검색은 같은 날짜를 `startDate`와 `endDate`에 동시에 넣으면 0건이 나올 수 있다. 특정일 뉴스는 검색 URL에서 `startDate=전날`, `endDate=해당일` 형태로 조회하는 쪽이 안정적이다.
 
-## 메인 파이프라인 연결
+## 현재 파이프라인과의 경계
 
-수집 결과를 메인 프로젝트에서 쓰려면 최종 원천 뉴스를 `data/samsung_news_raw.pkl` 형식으로 맞춘 뒤 루트에서 아래를 실행한다.
-
-```bash
-python scripts/02_prepare_news.py --seed 2
-```
-
-그 결과 메인 런타임 입력인 아래 파일이 생성된다.
-
-- `outputs/processed_news.csv`
-- `outputs/daily_news_selection.csv`
+이 도구로 수집한 원천은 별도 검토·provenance 절차를 거쳐 새로운 versioned
+candidate에만 사용할 수 있다. 현재의 `02_prepare_news.py`는 legacy pkl/CSV
+split sampler가 아니라 명시한 sealed profile의 `news.json`을 검증하는 단계다.
+공식 bundle 또는 이미 봉인된 뉴스의 기사·slot·hash를 이 폴더의 수집 결과로
+바꾸지 않는다. 현재 실행·재봉인·검증 명령은 루트의
+`RUNBOOK_AND_PREFLIGHT.md`를 따른다.

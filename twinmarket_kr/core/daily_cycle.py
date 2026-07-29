@@ -19,23 +19,108 @@ from twinmarket_kr.llm.analysis import (
     analyze_market,
     depth2_post_search,
     depth2_pre_search,
-    interpret_news,
 )
-from twinmarket_kr.llm.belief import update_belief
+from twinmarket_kr.llm.belief import belief_dimensions, generate_short_term_belief
 from twinmarket_kr.llm.client import OpenRouterClient, stable_llm_seed
 from twinmarket_kr.llm.decision import build_trading_constraints, make_decision
 
 
-def _portfolio_numbers(memory_agent: MemoryAgent, agent_id: str, turn: int) -> tuple[float, int]:
+def _portfolio_numbers(
+    memory_agent: MemoryAgent,
+    agent_id: str,
+    turn: int,
+    *,
+    stock_code: str,
+) -> tuple[float, int]:
     row = memory_agent._latest_portfolio(agent_id, before_or_at_turn=turn)  # internal read for orchestration
     if row is None:
         return 0.0, 0
     current_quantity = 0
     for pos in json.loads(row["positions"]):
-        if pos.get("stock_code") == config.STOCK_CODE:
+        if pos.get("stock_code") == stock_code:
             current_quantity = int(pos.get("quantity", 0))
             break
     return float(row["cash"]), current_quantity
+
+
+def _build_current_evidence(
+    *,
+    agent_id: str,
+    turn: int,
+    news_context: dict[str, Any],
+    community_reflection: dict[str, Any] | None,
+) -> tuple[dict[str, Any], set[str]]:
+    """Project only current news/community evidence into the STB boundary."""
+
+    read_by_id = {
+        str(item["id"]): item
+        for item in news_context.get("read_contents") or []
+        if item.get("id")
+    }
+    news_rows: list[dict[str, Any]] = []
+    evidence_ids: set[str] = set()
+    for title_row in news_context.get("daily_titles") or []:
+        evidence_id = str(title_row.get("article_id") or title_row.get("id") or "")
+        if not evidence_id:
+            raise ValueError("current news evidence is missing an article ID")
+        item = {
+            "evidence_id": evidence_id,
+            "kind": "news",
+            "payload_sha256": str(title_row.get("payload_sha256") or ""),
+            "title": str(title_row.get("title") or ""),
+            "published_at": str(
+                title_row.get("published_at")
+                or f"{title_row.get('date', '')}T{title_row.get('time', '')}"
+            ),
+        }
+        readable = read_by_id.get(str(title_row.get("id") or ""))
+        if readable is not None:
+            item["summary"] = str(readable.get("content") or "")
+        news_rows.append(item)
+        evidence_ids.add(evidence_id)
+
+    search_rows: list[dict[str, Any]] = []
+    for row in news_context.get("search_read_contents") or []:
+        evidence_id = str(row.get("article_id") or row.get("id") or "")
+        if not evidence_id or evidence_id in evidence_ids:
+            continue
+        search_rows.append(
+            {
+                "evidence_id": evidence_id,
+                "kind": "depth2_recent_search",
+                "payload_sha256": str(row.get("payload_sha256") or ""),
+                "title": str(row.get("title") or ""),
+                "summary": str(row.get("summary") or ""),
+                "published_at": str(
+                    row.get("published_at")
+                    or f"{row.get('date', '')}T{row.get('time', '')}"
+                ),
+            }
+        )
+        evidence_ids.add(evidence_id)
+
+    community_claims: list[dict[str, Any]] = []
+    for index, claim in enumerate(
+        (community_reflection or {}).get("claims") or [],
+        start=1,
+    ):
+        claim_id = f"community_claim:{agent_id}:t{turn:03d}:{index:02d}"
+        community_claims.append(
+            {
+                "evidence_id": claim_id,
+                "kind": "community_claim",
+                "claim_text": str(claim["claim_text"]),
+                "stance": str(claim["claim_stance"]),
+                "source_exposure_ids": list(claim["source_exposure_ids"]),
+                "supporting_quote": str(claim["supporting_quote"]),
+            }
+        )
+        evidence_ids.add(claim_id)
+    return {
+        "news": news_rows,
+        "depth2_search_results": search_rows,
+        "community_claims": community_claims,
+    }, evidence_ids
 
 
 async def run_agent_turn(
@@ -63,6 +148,7 @@ async def run_agent_turn(
     db_write_lock: asyncio.Lock | None = None,
     community_agent: Any | None = None,
     random_seed: int = config.RANDOM_SEED,
+    stock_code: str = config.STOCK_CODE,
 ) -> dict[str, Any]:
     agent_id = str(agent["agent_id"])
     today_context = collect_context(
@@ -84,7 +170,24 @@ async def run_agent_turn(
         fundamental_agent=fundamental_agent,
         news_agent=news_agent,
         community_agent=community_agent,
+        stock_code=stock_code,
     )
+    community_log = today_context.get("community_log")
+    if (
+        event_logger is not None
+        and subturn == "am"
+        and community_log is not None
+        and today_context.get("community_log_turn") is not None
+    ):
+        event_logger.log_community_delivery(
+            agent_id=agent_id,
+            source_turn=int(today_context["community_log_turn"]),
+            delivery_turn=turn,
+            source_date=str(community_log.get("date") or ""),
+            delivery_date=date,
+            best_posts=community_log.get("best_posts_seen") or [],
+            posts_read=community_log.get("posts_read") or [],
+        )
     today_context["news_context"] = news_agent.expand_context_from_selection(
         base_context=today_context["news_context"],
         current_date=today_context["news_max_date"],
@@ -105,6 +208,15 @@ async def run_agent_turn(
             "unresolved_questions": [],
         }
         if pre_search.get("search_keywords"):
+            base_article_ids = {
+                str(row.get("article_id") or row.get("id") or "").strip()
+                for row in (
+                    today_context["news_context"].get("daily_titles") or []
+                )
+                if str(
+                    row.get("article_id") or row.get("id") or ""
+                ).strip()
+            }
             search_results = news_agent.search_news_flat(
                 keywords=list(pre_search.get("search_keywords") or []),
                 current_date=today_context["news_max_date"],
@@ -117,6 +229,7 @@ async def run_agent_turn(
                 ),
                 lookback_days=7,
                 top_n=DEPTH2_MAX_SEARCH_ARTICLES,
+                exclude_article_ids=base_article_ids,
             )
             post_search = await depth2_post_search(
                 agent,
@@ -144,77 +257,97 @@ async def run_agent_turn(
             str(row.get("id")) for row in search_results if row.get("id")
         ]
         today_context["news_context"]["depth2_flow"] = depth2_flow
-    depth = int(agent.get("news_depth") if agent.get("news_depth") is not None else 1)
-    community_log = today_context.get("community_log")
     should_do_community_thinking = (
-        config.ENABLE_COMMUNITY
-        and depth >= 1
-        and community_agent is not None
+        community_agent is not None
         and community_log is not None
+        and bool(
+            community_log.get("best_posts_seen")
+            or community_log.get("posts_read")
+            or community_log.get("candidate_posts_seen")
+        )
     )
     if should_do_community_thinking:
-        news_interpretation, community_thinking_text = await asyncio.gather(
-            interpret_news(
-                agent,
-                today_context["news_context"],
-                client=client,
-                seed=stable_llm_seed(random_seed, agent_id, turn, "news_interpretation"),
-            ),
-            community_thinking(
-                agent,
-                community_log,
-                client=client,
-                seed=stable_llm_seed(random_seed, agent_id, turn, "community_thinking"),
-            ),
+        community_reflection = await community_thinking(
+            agent,
+            community_log,
+            delivery_turn=turn,
+            delivery_date=date,
+            client=client,
+            seed=stable_llm_seed(random_seed, agent_id, turn, "community_thinking"),
         )
         if db_write_lock is not None:
             async with db_write_lock:
                 community_agent.update_community_thinking(
                     agent_id,
                     int(today_context["community_log_turn"]),
-                    community_thinking_text,
+                    community_reflection,
                 )
         else:
             community_agent.update_community_thinking(
                 agent_id,
                 int(today_context["community_log_turn"]),
-                community_thinking_text,
+                community_reflection,
             )
     else:
-        news_interpretation = await interpret_news(
-            agent,
-            today_context["news_context"],
-            client=client,
-            seed=stable_llm_seed(random_seed, agent_id, turn, "news_interpretation"),
-        )
-        community_thinking_text = None
-    selected_news_raw = news_interpretation.get("selected_news") or []
-    influential_news, unresolved_influential_news = news_agent.normalize_influential_news(
-        selected_news_raw if isinstance(selected_news_raw, list) else [],
-        today_context["news_context"],
+        community_reflection = None
+    today_context["community_thinking"] = community_reflection
+    current_evidence, allowed_evidence_ids = _build_current_evidence(
+        agent_id=agent_id,
+        turn=turn,
+        news_context=today_context["news_context"],
+        community_reflection=community_reflection,
     )
-    news_interpretation["selected_news_raw"] = selected_news_raw
-    news_interpretation["selected_news"] = influential_news
-    news_interpretation["unmapped_selected_news"] = unresolved_influential_news
-    today_context["news_context"]["influential_news_ids"] = [
-        str(row["id"]) for row in influential_news
-    ]
-    today_context["news_interpretation"] = news_interpretation
-    today_context["community_thinking"] = community_thinking_text
-    today_belief = await update_belief(
+    event = {
+        "event_id": f"{date}/{subturn.upper()}",
+        "turn": int(turn),
+        "date": date,
+        "subturn": subturn,
+    }
+    previous_ltb = memory_agent.previous_ltb(
+        agent_id=agent_id,
+        decision_turn=turn,
+    )
+    current_stb = await generate_short_term_belief(
         agent,
-        today_context,
+        event=event,
+        current_evidence=current_evidence,
+        allowed_evidence_ids=allowed_evidence_ids,
         client=client,
-        seed=stable_llm_seed(random_seed, agent_id, turn, "belief_update"),
-        memory=None,
+        seed=stable_llm_seed(random_seed, agent_id, turn, "short_term_belief"),
+    )
+    current_stb_dimensions = belief_dimensions(
+        current_stb,
+        label="generated_short_term_belief",
     )
     if db_write_lock is not None:
         async with db_write_lock:
-            memory_agent.save_belief(today_belief)
+            stb_id = memory_agent.save_stb(
+                agent_id=agent_id,
+                turn=turn,
+                date=date,
+                subturn=subturn,
+                dimensions=current_stb_dimensions,
+                evidence=current_evidence,
+                dimension_evidence=current_stb["dimension_evidence"],
+            )
     else:
-        memory_agent.save_belief(today_belief)
+        stb_id = memory_agent.save_stb(
+            agent_id=agent_id,
+            turn=turn,
+            date=date,
+            subturn=subturn,
+            dimensions=current_stb_dimensions,
+            evidence=current_evidence,
+            dimension_evidence=current_stb["dimension_evidence"],
+        )
+    current_stb_state = memory_agent.get_stb(stb_id)
     current_price = float(today_context.get("announced_price") or today_context["market_features"]["close"])
-    available_cash, current_quantity = _portfolio_numbers(memory_agent, agent["agent_id"], turn - 1)
+    available_cash, current_quantity = _portfolio_numbers(
+        memory_agent,
+        agent["agent_id"],
+        turn - 1,
+        stock_code=stock_code,
+    )
     constraints = build_trading_constraints(
         available_cash=available_cash,
         current_quantity=current_quantity,
@@ -225,30 +358,75 @@ async def run_agent_turn(
     today_context["trading_constraints"] = constraints
     market_analysis = await analyze_market(
         agent,
-        today_belief=today_belief,
+        previous_ltb=previous_ltb,
+        current_stb=current_stb_state,
         market_features=today_context["market_features"],
         portfolio_summary=today_context["portfolio_summary"],
-        news_interpretation=news_interpretation,
+        execution_state=constraints,
         client=client,
         seed=stable_llm_seed(random_seed, agent_id, turn, "market_analysis"),
     )
+    if db_write_lock is not None:
+        async with db_write_lock:
+            analysis_id = memory_agent.record_analysis_lineage(
+                agent_id=agent_id,
+                turn=turn,
+                date=date,
+                subturn=subturn,
+                source_ltb_id=str(previous_ltb["ltb_id"]),
+                source_stb_id=stb_id,
+                analysis=market_analysis,
+            )
+    else:
+        analysis_id = memory_agent.record_analysis_lineage(
+            agent_id=agent_id,
+            turn=turn,
+            date=date,
+            subturn=subturn,
+            source_ltb_id=str(previous_ltb["ltb_id"]),
+            source_stb_id=stb_id,
+            analysis=market_analysis,
+        )
     decision = await make_decision(
         agent,
-        today_belief,
+        previous_ltb,
+        current_stb_state,
         market_analysis,
         today_context["portfolio_summary"],
-        today_context["order_history"],
         constraints,
         allow_hold=decision_space != "buy_sell_only",
         client=client,
         seed=stable_llm_seed(random_seed, agent_id, turn, "trading_decision"),
     )
+    if db_write_lock is not None:
+        async with db_write_lock:
+            decision_id = memory_agent.record_decision_lineage(
+                agent_id=agent_id,
+                turn=turn,
+                date=date,
+                subturn=subturn,
+                source_ltb_id=str(previous_ltb["ltb_id"]),
+                source_stb_id=stb_id,
+                analysis_id=analysis_id,
+                decision=decision,
+            )
+    else:
+        decision_id = memory_agent.record_decision_lineage(
+            agent_id=agent_id,
+            turn=turn,
+            date=date,
+            subturn=subturn,
+            source_ltb_id=str(previous_ltb["ltb_id"]),
+            source_stb_id=stb_id,
+            analysis_id=analysis_id,
+            decision=decision,
+        )
     trade_log = {
         "agent_id": agent["agent_id"],
         "turn": turn,
         "date": execution_date or date,
         "action": decision["action"],
-        "stock_code": config.STOCK_CODE,
+        "stock_code": stock_code,
         "quantity": decision["quantity"],
         "fee": 0,
         "action_reason": decision["reason"],
@@ -257,6 +435,10 @@ async def run_agent_turn(
         "submitted_price": None,
         "status": "pending" if decision["action"] != "hold" and decision["quantity"] > 0 else "not_submitted",
         "filled_quantity": 0,
+        "analysis_id": analysis_id,
+        "decision_id": decision_id,
+        "source_ltb_id": previous_ltb["ltb_id"],
+        "source_stb_id": stb_id,
     }
     if db_write_lock is not None:
         async with db_write_lock:
@@ -266,7 +448,7 @@ async def run_agent_turn(
     order = None
     if decision["action"] != "hold" and decision["quantity"] > 0:
         order = {
-            "stock_code": config.STOCK_CODE,
+            "stock_code": stock_code,
             "user_id": agent["agent_id"],
             "direction": decision["action"],
             "quantity": decision["quantity"],
@@ -274,6 +456,10 @@ async def run_agent_turn(
             "announced_price": current_price,
             "timestamp": float(turn),
             "reason": decision["reason"],
+            "source_ltb_id": previous_ltb["ltb_id"],
+            "source_stb_id": stb_id,
+            "analysis_id": analysis_id,
+            "decision_id": decision_id,
             "decision_date": today_context["decision_date"],
             "market_features_date": today_context["market_features_date"],
             "news_start_date": today_context["news_start_date"],
@@ -288,6 +474,26 @@ async def run_agent_turn(
             "one_share_reason": decision.get("one_share_reason"),
         }
     if event_logger is not None:
+        cited_news_ids = {
+            evidence_id
+            for dimension in current_stb["dimension_evidence"].values()
+            for relation in ("support", "contradict")
+            for evidence_id in dimension[relation]
+            if evidence_id in {
+                str(item.get("article_id") or item.get("id") or "")
+                for item in today_context["news_context"].get("daily_titles") or []
+            }
+        }
+        news_interpretation = {
+            "source": "short_term_belief_dimension_evidence",
+            "selected_news": [{"id": value} for value in sorted(cited_news_ids)],
+            "unmapped_selected_news": [],
+            "news_sentiment": "encoded_in_stb",
+        }
+        today_context["news_interpretation"] = news_interpretation
+        today_context["news_context"]["influential_news_ids"] = sorted(
+            cited_news_ids
+        )
         fake_news_audit = news_agent.fake_audit_for_context(
             today_context["news_context"],
             selected_news=news_interpretation.get("selected_news") or [],
@@ -298,19 +504,28 @@ async def run_agent_turn(
             date=date,
             context=today_context,
             news_interpretation=news_interpretation,
-            belief=today_belief,
+            belief={"stb_id": stb_id, **current_stb},
             market_analysis=market_analysis,
             decision=decision,
             order=order,
             depth2_flow=depth2_flow,
             fake_news_audit=fake_news_audit,
+            lineage={
+                "source_ltb_id": previous_ltb["ltb_id"],
+                "source_stb_id": stb_id,
+                "analysis_id": analysis_id,
+                "decision_id": decision_id,
+            },
         )
     return {
         "agent": agent,
         "context": today_context,
-        "belief": today_belief,
+        "previous_ltb": previous_ltb,
+        "stb": current_stb_state,
+        "stb_id": stb_id,
+        "analysis_id": analysis_id,
         "decision": decision,
+        "decision_id": decision_id,
         "order": order,
-        "news_interpretation": news_interpretation,
         "market_analysis": market_analysis,
     }

@@ -15,7 +15,7 @@ Depth 2는 당일 헤드라인과 요약본을 먼저 확인한 뒤, 의사결�
 - key_findings: 당일 요약에서 파악한 핵심 내용을 담은 비어 있지 않은 문자열 배열 list[string].
 - curiosity_points: 더 확인하고 싶은 쟁점을 담은 비어 있지 않은 문자열 배열 list[string].
 - search_rationale: 추가 검색이 필요한 이유를 설명하는 비어 있지 않은 문자열 string.
-- search_keywords: 추가 검색에 사용할 3~8개의 비어 있지 않은 문자열 배열 list[string].
+- search_keywords: 추가 검색에 사용할 0~5개의 비어 있지 않은 문자열 배열 list[string]. 추가로 찾아볼 것이 없다고 판단하면 빈 배열을 반환한다.
 
 올바른 형식 예시:
 {{

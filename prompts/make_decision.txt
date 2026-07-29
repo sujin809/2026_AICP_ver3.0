@@ -34,6 +34,7 @@
 
 【Step 1: 방향 결정 — 살 것인가, 팔 것인가?】
 오늘의 Belief와 시장 분석, 현재 포트폴리오를 바탕으로 삼성전자에 대한 방향을 정하세요.
+- 이전 Long-Term Belief와 오늘의 Short-Term Belief를 단순히 이어 붙이거나 Short-Term Belief만 따르지 말고, 같은 차원의 일치·충돌을 시장 분석과 함께 종합하세요.
 - action은 거래 제약의 allowed_actions 안에서만 선택할 수 있습니다.
 - allowed_actions가 ["buy"]이면 반드시 buy를 선택해야 합니다.
 - allowed_actions가 ["sell"]이면 반드시 sell을 선택해야 합니다.
@@ -43,15 +44,15 @@
 
 【Step 2: 거래 가능 범위 확인 — 얼마나 거래할 수 있는가?】
 거래 제약을 확인하여 가능한 수량 범위 안에서 수량을 정하세요.
-- quantity는 반드시 1 이상의 정수입니다.
-- buy 선택 시 quantity는 max_buy_quantity를 초과할 수 없습니다.
-- sell 선택 시 quantity는 max_sell_quantity를 초과할 수 없습니다.
-- 거래 수수료는 없으며, 매수/매도 금액은 announced_price * quantity로 계산됩니다.
-- quantity에 0, 빈 값, null, 음수, 문자열은 절대 출력하지 마세요.
+- requested_quantity는 반드시 1 이상의 정수입니다.
+- buy 선택 시 requested_quantity는 max_buy_quantity를 초과할 수 없습니다.
+- sell 선택 시 requested_quantity는 max_sell_quantity를 초과할 수 없습니다.
+- 거래 수수료는 없으며, 매수/매도 금액은 announced_price * requested_quantity로 계산됩니다.
+- requested_quantity에 0, 빈 값, null, 음수, 문자열은 절대 출력하지 마세요.
 - 수량은 포트폴리오 제약과 명시한 리스크 관리 방침을 반영해 의도적으로 선택하세요.
 
 【Step 3: 최종 결정】
-Step 1의 방향과 Step 2의 수량을 종합하여 최종 action, quantity, reason, risk_control을 정하세요.
+Step 1의 방향과 Step 2의 수량을 종합하여 최종 action, requested_quantity, reason, risk_control을 정하세요.
 
 ---
 
@@ -59,21 +60,24 @@ Step 1의 방향과 Step 2의 수량을 종합하여 최종 action, quantity, re
 
 필수 JSON 키:
 - action: 반드시 거래 제약의 allowed_actions 안에서만 선택. "buy" 또는 "sell".
-- quantity: 1 이상의 정수. buy는 max_buy_quantity 이하, sell은 max_sell_quantity 이하.
-- reason: 결정 근거. 뉴스, 시장 데이터, 포트폴리오 상태 중 핵심 근거를 명시.
+- requested_quantity: 1 이상의 정수. buy는 max_buy_quantity 이하, sell은 max_sell_quantity 이하.
+- reason: 결정 근거. Long-Term Belief, Short-Term Belief, 시장 분석, 시장 데이터, 포트폴리오 상태 중 핵심 근거를 명시.
 - risk_control: 리스크 관리 방침.
 
 무효 출력 금지:
 - action이 "hold", "", null이면 실패입니다.
-- quantity가 0, null, 음수, 문자열이면 실패입니다.
+- requested_quantity가 0, null, 음수, 문자열이면 실패입니다.
 - JSON 외 설명, 마크다운, 코드블록을 출력하면 실패입니다.
 
 출력 예시:
-{{
+{
   "action": "buy",
-  "quantity": 10,
+  "requested_quantity": 10,
   "reason": "공시가와 뉴스 흐름, 현재 현금 비중을 고려해 제한적으로 매수합니다.",
   "risk_control": "현금 여력을 남기고 단일 종목 과도한 집중을 피합니다."
-}}
+}
 
 price, order_type, hold, market, limit 필드는 출력하지 마세요.
+
+입력 정보(JSON):
+<<STAGE_PAYLOAD_JSON>>

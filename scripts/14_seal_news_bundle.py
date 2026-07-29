@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""RN 실뉴스 번들 조립·검증 (real_news_bundle_manifest candidate).
+"""통합 실뉴스 번들 조립·검증 (real_news_bundle_manifest candidate).
 
 script 13의 provenance 바인딩 결과를 45거래일×2 = 90 event 슬롯에 매핑하고,
-news.SealedNewsRegistry 스키마로 묶어 검증한다. 네트워크/LLM 미접촉.
+공통 ``SealedNewsBundle`` 스키마로 묶어 검증한다. 네트워크/LLM 미접촉.
 
 배치 규칙: 기사 노출시각 = effective_at(=observed_at, script 13에서 확정).
 각 기사를 effective_at <= cutoff 를 만족하는 가장 이른 event에 배치(gapless).
 event당 카테고리 쿼터 5/3/2(합 10), 부족하면 shortage 기록(부족 허용 정책).
 
 산출: real_news_bundle_manifest.json  (execution_authorized=false candidate).
-검증: SealedNewsRegistry.from_mapping + event별 _validate_slot_group.
+검증: 임시 파일을 공통 ``SealedNewsBundle.load``로 다시 읽어 검증한다.
 """
 from __future__ import annotations
 
@@ -24,25 +24,29 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from twinmarket_kr.rn_ab.news import (  # noqa: E402
-    SealedNewsRegistry,
-    bundle_content_sha256,
-    fake_registry_sha256,
+from twinmarket_kr.agents.news_agent import (  # noqa: E402
+    SealedNewsBundle,
+    news_bundle_content_sha256,
+    news_fake_registry_sha256,
 )
 
-STOCK = "005930"
-START_DATE, END_DATE = "2026-02-27", "2026-05-04"
 TARGET = 10
 CATEGORY_TARGETS = {"종목": 5, "섹터": 3, "경제": 2}
 CATEGORY_ORDER = ["종목", "섹터", "경제"]
 TZ = "+09:00"
 
 
-def trading_dates(sim_db: Path) -> list[str]:
+def trading_dates(
+    sim_db: Path,
+    *,
+    stock_code: str,
+    start_date: str,
+    end_date: str,
+) -> list[str]:
     with sqlite3.connect(sim_db) as conn:
         rows = conn.execute(
             "SELECT DISTINCT date FROM StockData WHERE stock_id=? AND date BETWEEN ? AND ? ORDER BY date",
-            (STOCK, START_DATE, END_DATE),
+            (stock_code, start_date, end_date),
         ).fetchall()
     return [r[0] for r in rows]
 
@@ -103,7 +107,7 @@ def assign(articles: list[dict], events: list[dict]) -> tuple[dict[str, list[dic
 
 
 def select_slots(event_articles: list[dict]) -> list[dict]:
-    """카테고리 5/3/2, 부족하면 있는 만큼. 결정론적 정렬(effective, article_id)."""
+    """원 설계의 카테고리 5/3/2를 적용하고 부족하면 있는 만큼 반환한다."""
     by_cat: dict[str, list[dict]] = defaultdict(list)
     for a in event_articles:
         by_cat[_cat_of(a["article_id"])].append(a)
@@ -115,17 +119,26 @@ def select_slots(event_articles: list[dict]) -> list[dict]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description="RN 실뉴스 번들 조립·검증.")
+    p = argparse.ArgumentParser(description="통합 실뉴스 번들 조립·검증.")
     p.add_argument("--bound", type=Path,
                    default=PROJECT_ROOT / "preparation/rn_ab_source_candidate_v1/provenance_bound/provenance_bound_articles.json")
     p.add_argument("--sim-db", type=Path, default=PROJECT_ROOT / "outputs/sim.db")
     p.add_argument("--out", type=Path,
                    default=PROJECT_ROOT / "preparation/rn_ab_source_candidate_v1/real_news_bundle_manifest.json")
+    p.add_argument("--stock-code", default="005930")
+    p.add_argument("--start-date", default="2026-02-27")
+    p.add_argument("--end-date", default="2026-05-04")
     args = p.parse_args(argv)
+    if args.start_date > args.end_date:
+        p.error("--start-date must not follow --end-date")
 
     bound = json.loads(args.bound.read_text(encoding="utf-8"))["articles"]
-    by_id = {a["article_id"]: a for a in bound}
-    dates = trading_dates(args.sim_db)
+    dates = trading_dates(
+        args.sim_db,
+        stock_code=args.stock_code,
+        start_date=args.start_date,
+        end_date=args.end_date,
+    )
     events = build_events(dates)
     by_event, dropped = assign(bound, events)
 
@@ -172,7 +185,7 @@ def main(argv: list[str] | None = None) -> int:
     bundle = {
         "artifact_type": "real_news_bundle_manifest",
         "bundle_sha256": "",  # 아래에서 채움
-        "stock_code": STOCK,
+        "stock_code": args.stock_code,
         "target_real_news_per_event": TARGET,
         "fake_news_per_event": 0,
         "articles": article_list,
@@ -180,29 +193,34 @@ def main(argv: list[str] | None = None) -> int:
         "accepted_shortages": accepted_shortages,
         "known_fake_ids": [],
         "known_fake_payload_hashes": [],
-        "fake_registry_sha256": fake_registry_sha256(known_fake_ids=[], known_fake_payload_hashes=[]),
+        "fake_registry_sha256": news_fake_registry_sha256(
+            known_fake_ids=[],
+            known_fake_payload_hashes=[],
+        ),
     }
-    bundle["bundle_sha256"] = bundle_content_sha256(bundle)
+    bundle["bundle_sha256"] = news_bundle_content_sha256(bundle)
 
-    # 검증
-    reg = SealedNewsRegistry.from_mapping(bundle)
-    slot_errors = []
-    for e in events:
-        eid = e["event_id"]
-        grp = reg.slots_by_event.get(eid)
-        if grp is None:
-            continue
-        try:
-            reg._validate_slot_group(eid, grp, accepted_shortages)
-        except Exception as exc:  # noqa: BLE001
-            slot_errors.append(f"{eid}: {exc}")
-
-    args.out.write_text(json.dumps(bundle, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 공통 runtime loader가 실제로 수용하는 파일만 최종 경로로 승격한다.
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    temporary = args.out.with_suffix(args.out.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(bundle, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    try:
+        validated = SealedNewsBundle.load(
+            temporary,
+            expected_stock_code=args.stock_code,
+        )
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+    temporary.replace(args.out)
 
     covered = len({s["event_id"] for s in slots})
     full = sum(1 for e in events if e["event_id"] not in accepted_shortages and e["event_id"] not in empty_events)
     print("=" * 60)
-    print("RN 실뉴스 번들 조립·검증 (candidate)")
+    print("통합 실뉴스 번들 조립·검증 (candidate)")
     print("=" * 60)
     print(f"거래일 {len(dates)} → event {len(events)}")
     print(f"슬롯 배치 event : {covered}/{len(events)}")
@@ -210,13 +228,13 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  shortage     : {len(accepted_shortages)}")
     print(f"  빈 event(기사0): {len(empty_events)}  {empty_events[:5]}")
     print(f"사용 기사      : {len(article_list)} / 슬롯 {len(slots)} / 윈도우밖 drop {dropped}")
-    print(f"SealedNewsRegistry.from_mapping : ✅ 통과")
-    print(f"event별 slot_group 검증 오류    : {len(slot_errors)}")
-    for se in slot_errors[:5]:
-        print("   ", se)
+    print(
+        "SealedNewsBundle.load          : ✅ 통과 "
+        f"({validated.bundle_sha256[:12]}…)"
+    )
     print(f"산출물: {args.out}")
-    if empty_events or slot_errors:
-        print("⚠️ 빈 event 또는 slot 오류 존재 → 봉인 전 해결 필요")
+    if empty_events:
+        print("⚠️ 기사 0개 event는 현재 bundle schema로 실행할 수 없습니다.")
         return 1
     print("✅ 번들 스키마·슬롯 검증 통과 (execution_authorized=false candidate)")
     return 0
