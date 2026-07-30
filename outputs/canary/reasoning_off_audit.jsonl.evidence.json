@@ -1,0 +1,12 @@
+{
+  "artifact_type": "integrated_reasoning_off_canary_evidence",
+  "attempt_count": 1,
+  "audit_path": "/private/tmp/claude-501/-Users-sujinjung-Desktop-felab-aicp/e10b11cf-1fb5-46cd-840d-a9b0627f8b42/scratchpad/canary/reasoning_off_audit.jsonl",
+  "audit_sha256": "d7c670664339f053f7ac98243642fc64c2ddeb1007daa194c1d2639171722555",
+  "model": "qwen/qwen3.5-flash-02-23",
+  "provider": "alibaba",
+  "reasoning_tokens": 0,
+  "status": "validated",
+  "study_spec_sha256": "d6ca6af1a6e0d288f70274250d607ad72435ef2622a18729facb4a41b826d379",
+  "success_count": 1
+}

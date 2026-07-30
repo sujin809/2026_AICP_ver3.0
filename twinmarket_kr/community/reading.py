@@ -149,8 +149,8 @@ async def community_reading_select(
     selected: list[int] = []
     current_prompt = prompt
     stage = "community_read_select"
-    validation_attempts = 4
-    temperatures = [0.3, 0.1, 0.1, 0.1]
+    validation_attempts = 6
+    temperatures = [0.3 if a == 1 else 0.1 for a in range(1, validation_attempts + 1)]
     seeds = [
         stable_llm_seed(seed or 0, "community_select_validation", attempt)
         for attempt in range(1, validation_attempts + 1)
@@ -260,7 +260,7 @@ async def community_reading_select(
             ),
         )
     else:
-        raise CommunityValidationError("community reading selection was invalid after 4 attempts")
+        raise CommunityValidationError(f"community reading selection was invalid after {validation_attempts} attempts")
     return selected
 
 
@@ -286,8 +286,8 @@ async def community_reading_react(
     validated: list[dict[str, Any]] = []
     current_prompt = prompt
     stage = "community_read_react"
-    validation_attempts = 4
-    temperatures = [0.2, 0.1, 0.1, 0.1]
+    validation_attempts = 6
+    temperatures = [0.2 if a == 1 else 0.1 for a in range(1, validation_attempts + 1)]
     seeds = [
         stable_llm_seed(seed or 0, "community_react_validation", attempt)
         for attempt in range(1, validation_attempts + 1)
@@ -392,7 +392,7 @@ async def community_reading_react(
             ),
         )
     else:
-        raise CommunityValidationError("community reactions were invalid after 4 attempts")
+        raise CommunityValidationError(f"community reactions were invalid after {validation_attempts} attempts")
     return validated
 
 

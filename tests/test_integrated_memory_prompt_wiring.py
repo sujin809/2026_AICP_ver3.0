@@ -6,7 +6,10 @@ import unittest
 from typing import Any
 from unittest import mock
 
+import config
 from twinmarket_kr.community.posting import posting_decision
+from twinmarket_kr.community.reading import community_reading_select
+from twinmarket_kr.community.validation import CommunityValidationError
 from twinmarket_kr.llm.analysis import AnalysisValidationError, analyze_market
 from twinmarket_kr.llm.belief import (
     BeliefValidationError,
@@ -85,6 +88,23 @@ class _CaptureClient:
         self.prompts.append(messages[-1]["content"])
         self.kwargs.append(dict(kwargs))
         return self.response
+
+
+class _SequenceClient:
+    """Return a different response per attempt so retry prompts can be read back."""
+
+    def __init__(self, responses: list[dict[str, Any]]) -> None:
+        self.responses = [json.dumps(item, ensure_ascii=False) for item in responses]
+        self.prompts: list[str] = []
+
+    async def chat(
+        self,
+        messages: list[dict[str, str]],
+        **_kwargs: Any,
+    ) -> str:
+        self.prompts.append(messages[-1]["content"])
+        index = min(len(self.prompts), len(self.responses)) - 1
+        return self.responses[index]
 
 
 class IntegratedMemoryPromptWiringTests(unittest.IsolatedAsyncioTestCase):
@@ -658,6 +678,83 @@ class StbScopeAndAnalysisEvidenceContractTests(unittest.IsolatedAsyncioTestCase)
             [due_outcome_id],
         )
 
+    async def _run_stb_sequence(self, responses: list[dict[str, Any]]) -> _SequenceClient:
+        client = _SequenceClient(responses)
+        await generate_short_term_belief(
+            {"agent_id": "agent-1", "news_depth": 1, "persona_prompt": "persona"},
+            event={
+                "event_id": "2026-02-27/AM",
+                "turn": 1,
+                "date": "2026-02-27",
+                "subturn": "am",
+            },
+            current_evidence={
+                "news": [
+                    {"evidence_id": "news:a", "title": "제목 a"},
+                    {"evidence_id": "news:b", "title": "제목 b"},
+                ],
+                "depth2_search_results": [],
+                "community_claims": [],
+            },
+            allowed_evidence_ids={"news:a", "news:b"},
+            client=client,
+            seed=7,
+            validation_attempts=2,
+        )
+        return client
+
+    async def test_same_id_in_both_relations_error_names_the_offending_ids(
+        self,
+    ) -> None:
+        """라이브에서 재시도가 두더지잡기로 실패한 원인이 ID 미표시였다."""
+
+        broken = _evidence(dim_1_support=["news:a"])
+        broken["dim_4"] = {"support": ["news:a", "news:b"], "contradict": ["news:a"]}
+        clean = _evidence(dim_1_support=["news:a"])
+        client = await self._run_stb_sequence(
+            [
+                {**_stb_dimensions("stb"), "dimension_evidence": broken},
+                {**_stb_dimensions("stb"), "dimension_evidence": clean},
+            ]
+        )
+        self.assertEqual(len(client.prompts), 2)
+        retry = client.prompts[1]
+        # 어느 차원인지뿐 아니라 어느 ID인지까지 재시도 프롬프트에 들어가야 한다.
+        self.assertIn("dimension_evidence.dim_4:same_id_in_both_relations", retry)
+        self.assertIn("news:a", retry)
+        # 겹치지 않은 news:b는 위반 목록에 들어가지 않는다.
+        self.assertNotIn("same_id_in_both_relations:['news:a', 'news:b']", retry)
+
+    async def test_retry_prompt_states_the_support_side_tiebreak_rule(self) -> None:
+        broken = _evidence(dim_1_support=["news:a"])
+        broken["dim_2"] = {"support": ["news:a"], "contradict": ["news:a"]}
+        clean = _evidence(dim_1_support=["news:a"])
+        client = await self._run_stb_sequence(
+            [
+                {**_stb_dimensions("stb"), "dimension_evidence": broken},
+                {**_stb_dimensions("stb"), "dimension_evidence": clean},
+            ]
+        )
+        retry = client.prompts[1]
+        self.assertIn("한 쪽에만 넣으세요", retry)
+        self.assertIn("support에만", retry)
+        self.assertIn("지적되지 않은 다른 차원은 그대로 두세요", retry)
+
+    async def test_char_limit_error_reports_the_actual_length(self) -> None:
+        over = _stb_dimensions("stb")
+        over["dim_2"] = "가" * 187  # dim_2 한도는 150자
+        clean = _evidence(dim_1_support=["news:a"])
+        client = await self._run_stb_sequence(
+            [
+                {**over, "dimension_evidence": clean},
+                {**_stb_dimensions("stb"), "dimension_evidence": clean},
+            ]
+        )
+        retry = client.prompts[1]
+        self.assertIn("dim_2 exceeds the 150-character limit", retry)
+        self.assertIn("current=187", retry)
+        self.assertIn("한도 안으로 줄여", retry)
+
     def _analysis_response(self, **overrides: Any) -> dict[str, Any]:
         response = {
             "market_view": "혼조",
@@ -773,6 +870,79 @@ class StbScopeAndAnalysisEvidenceContractTests(unittest.IsolatedAsyncioTestCase)
             with self.subTest(case=name):
                 with self.assertRaises(AnalysisValidationError):
                     await self._run_analysis(response)
+
+
+class BeliefLimitAndRetryBudgetTests(unittest.IsolatedAsyncioTestCase):
+    """길이 한도 상향과 재시도 예산 상향이 실제 호출 경로에 반영되는지 본다."""
+
+    def test_every_belief_dimension_limit_is_150(self) -> None:
+        self.assertEqual(
+            config.BELIEF_LIMITS,
+            {f"dim_{index}": 150 for index in range(1, 7)},
+        )
+
+    async def _stb_attempts(self, response: dict[str, Any]) -> _CaptureClient:
+        client = _CaptureClient(response)
+        with self.assertRaises(BeliefValidationError):
+            await generate_short_term_belief(
+                {"agent_id": "a", "news_depth": 1, "persona_prompt": "p"},
+                event={
+                    "event_id": "e",
+                    "turn": 1,
+                    "date": "2026-02-27",
+                    "subturn": "am",
+                },
+                current_evidence={
+                    "news": [],
+                    "depth2_search_results": [],
+                    "community_claims": [],
+                },
+                allowed_evidence_ids={"news:x"},
+                client=client,
+            )
+        return client
+
+    async def test_dimension_boundary_is_150_pass_151_fail(self) -> None:
+        evidence = _evidence()
+        ok = {**_stb_dimensions("stb"), "dim_2": "가" * 150}
+        client = _CaptureClient({**ok, "dimension_evidence": evidence})
+        result = await generate_short_term_belief(
+            {"agent_id": "a", "news_depth": 1, "persona_prompt": "p"},
+            event={"event_id": "e", "turn": 1, "date": "2026-02-27", "subturn": "am"},
+            current_evidence={
+                "news": [],
+                "depth2_search_results": [],
+                "community_claims": [],
+            },
+            allowed_evidence_ids=set(),
+            client=client,
+            validation_attempts=1,
+        )
+        self.assertEqual(len(result["dim_2"]), 150)
+
+        over = {**_stb_dimensions("stb"), "dim_2": "가" * 151}
+        failing = await self._stb_attempts({**over, "dimension_evidence": evidence})
+        self.assertIn("exceeds the 150-character limit (current=151)", failing.prompts[1])
+
+    async def test_production_stages_retry_six_times_before_failing(self) -> None:
+        # 재시도 예산을 올려도 temperature/seed 스케줄 길이가 따라오지 않으면
+        # journal 경계에서 죽는다. 실제 호출 횟수로 두 값이 함께 늘었는지 본다.
+        failing = await self._stb_attempts(
+            {**_stb_dimensions("stb"), "dimension_evidence": _evidence()
+             | {"dim_1": {"support": ["news:missing"], "contradict": []}}}
+        )
+        self.assertEqual(len(failing.prompts), 6)
+
+        select_client = _CaptureClient({"selected_post_ids": [999]})
+        with self.assertRaises(CommunityValidationError):
+            await community_reading_select(
+                {"persona_prompt": "p"},
+                [{"post_id": 1, "title": "t", "post_type": "analysis"}],
+                5,
+                client=select_client,
+                seed=1,
+            )
+        self.assertEqual(len(select_client.prompts), 6)
 
 
 if __name__ == "__main__":

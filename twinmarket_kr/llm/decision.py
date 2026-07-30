@@ -189,7 +189,7 @@ async def make_decision(
     allow_hold: bool = False,
     client: OpenRouterClient | None = None,
     seed: int | None = None,
-    validation_attempts: int = 4,
+    validation_attempts: int = 6,
 ) -> dict[str, Any]:
     if not trading_constraints.get("allowed_actions"):
         raise DecisionConstraintError(

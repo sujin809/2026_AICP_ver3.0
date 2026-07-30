@@ -86,8 +86,8 @@ async def posting_decision(
     raw: dict[str, Any] = {}
     current_prompt = prompt
     stage = "community_posting"
-    validation_attempts = 4
-    temperatures = [0.7, 0.3, 0.3, 0.3]
+    validation_attempts = 6
+    temperatures = [0.7 if a == 1 else 0.3 for a in range(1, validation_attempts + 1)]
     seeds = [
         stable_llm_seed(seed or 0, "community_posting_validation", attempt)
         for attempt in range(1, validation_attempts + 1)
@@ -188,7 +188,7 @@ async def posting_decision(
             )
         else:
             raise CommunityValidationError(
-                "community posting did not return a valid decision after 4 attempts"
+                f"community posting did not return a valid decision after {validation_attempts} attempts"
             )
     if raw["will_post"] is False:
         return None

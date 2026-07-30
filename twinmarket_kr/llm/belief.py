@@ -87,8 +87,10 @@ def belief_dimensions(value: Mapping[str, Any], *, label: str = "belief") -> dic
         text = raw.strip()
         limit = int(config.BELIEF_LIMITS[key])
         if len(text) > limit:
+            # 실제 길이를 함께 알려야 재시도가 "얼마나 줄여야 하는가"를 알 수 있다.
             raise BeliefValidationError(
-                f"{label}.{key} exceeds the {limit}-character limit"
+                f"{label}.{key} exceeds the {limit}-character limit "
+                f"(current={len(text)})"
             )
         dimensions[key] = text
     return dimensions
@@ -154,8 +156,16 @@ def _normalize_dimension_evidence(
             normalized[dimension][relation] = ids
         support = set(normalized[dimension].get("support", []))
         contradict = set(normalized[dimension].get("contradict", []))
-        if support & contradict:
-            errors.append(f"{field}.{dimension}:same_id_in_both_relations")
+        overlapping = support & contradict
+        if overlapping:
+            # 위반한 ID를 명시하지 않으면 모델이 support/contradict 목록을 스스로
+            # 대조해 겹치는 항목을 찾아야 한다. 라이브에서 그 추론이 실패하면서
+            # 지적받은 차원은 고치고 다른 차원을 새로 깨뜨리는 재시도 루프가
+            # 반복됐다. 어느 ID를 어디서 빼야 하는지 그대로 알려준다.
+            errors.append(
+                f"{field}.{dimension}:same_id_in_both_relations:"
+                f"{sorted(overlapping)}"
+            )
     return normalized, errors
 
 
@@ -384,6 +394,15 @@ async def _generate_hierarchical_belief(
             schema_hint=(
                 "dim_1부터 dim_6까지의 비어 있지 않은 문자열과 "
                 f"{evidence_field}만 가진 JSON object를 출력하세요."
+                # 같은 ID를 support/contradict 양쪽에 넣는 것은 규칙 위반인 줄
+                # 모르는 경우가 대부분이다. 어느 쪽에 둘지 기본값을 명시해
+                # 애매함 자체를 없앤다. 이 문장이 없으면 모델이 차원을
+                # 옮겨가며 같은 위반을 반복한다.
+                " 같은 근거 ID는 한 차원에서 support 또는 contradict 중"
+                " 한 쪽에만 넣으세요. 양쪽 다 해당한다고 느껴지면 support에만"
+                " 두세요. 위 검증 오류에 ID가 적혀 있으면 그 ID를 한 쪽에서"
+                " 제거하고, 지적되지 않은 다른 차원은 그대로 두세요."
+                " 글자 수 초과가 지적된 차원은 한도 안으로 줄여 다시 쓰세요."
                 + (
                     " dim_6은 `정보 한계: ... / 주의점: ...` 형식으로 두 표시를"
                     " 모두 포함해야 하며 과거 성과 회고를 쓰지 마세요."
@@ -405,7 +424,7 @@ async def generate_short_term_belief(
     allowed_evidence_ids: set[str],
     client: OpenRouterClient | None = None,
     seed: int | None = None,
-    validation_attempts: int = 4,
+    validation_attempts: int = 6,
 ) -> dict[str, Any]:
     """Create the current-turn STB from news/community evidence only."""
 
@@ -466,7 +485,7 @@ async def update_long_term_belief(
     eligible_price_outcomes_dim_6_only: list[Mapping[str, Any]] | None = None,
     client: OpenRouterClient | None = None,
     seed: int | None = None,
-    validation_attempts: int = 4,
+    validation_attempts: int = 6,
 ) -> dict[str, Any]:
     """Recursively create LTB_t after the same-turn actual fill is committed."""
 

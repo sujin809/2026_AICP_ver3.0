@@ -76,8 +76,8 @@ async def community_thinking(
     )
     current_prompt = prompt
     stage = "community_thinking"
-    validation_attempts = 4
-    temperatures = [0.3, 0.1, 0.1, 0.1]
+    validation_attempts = 6
+    temperatures = [0.3 if a == 1 else 0.1 for a in range(1, validation_attempts + 1)]
     seeds = [
         stable_llm_seed(seed or 0, "community_thinking_validation", attempt)
         for attempt in range(1, validation_attempts + 1)
@@ -190,7 +190,7 @@ async def community_thinking(
             ),
         )
     raise CommunityValidationError(
-        "community thinking did not satisfy the structured claim contract after 4 attempts"
+        f"community thinking did not satisfy the structured claim contract after {validation_attempts} attempts"
     )
 
 

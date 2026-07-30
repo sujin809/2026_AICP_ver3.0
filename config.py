@@ -64,13 +64,17 @@ MAX_SINGLE_TRADE_CASH_RATIO = 0.50
 MARKET_CLOSE_TIME = "15:30"
 ORDER_CUTOFF_TIME = "15:30"
 
+# 100자 한도는 라이브에서 재시도의 대부분을 만들었다. 1거래일 유료 실행에서
+# 검증 재시도 33건 중 32건이 길이 초과였고 실제 초과 폭은 101~117자였다.
+# 전 차원을 150으로 통일해 그 재시도를 제거한다. 이 값은 봉인 StudySpec의
+# ``belief_limits``와 exact match여야 하므로 변경 시 재봉인이 필요하다.
 BELIEF_LIMITS = {
     "dim_1": 150,
-    "dim_2": 100,
-    "dim_3": 100,
-    "dim_4": 100,
-    "dim_5": 100,
-    "dim_6": 100,
+    "dim_2": 150,
+    "dim_3": 150,
+    "dim_4": 150,
+    "dim_5": 150,
+    "dim_6": 150,
 }
 
 # 미사용(dead). 실험 구간은 CLI 인자(--start-date/--end-date) 또는 RN 봉인
