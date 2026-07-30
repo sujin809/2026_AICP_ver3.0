@@ -76,6 +76,12 @@ _CONTROL_ARTIFACTS = frozenset(
     {
         "checkpoint.json",
         "openrouter_calls.jsonl",
+        # 검증 거부 응답 발췌는 openrouter_calls.jsonl과 같은 텔레메트리다.
+        # 롤백 대상에 두면 event가 실패할 때마다 그 실패의 진단 근거가 함께
+        # 삭제된다. 실제로 2일 유료 실행에서 community_thinking이 10회
+        # 소진으로 죽었는데 거부 응답 기록이 전부 사라져 원인 규명이
+        # 불가능했다. 과학 상태가 아니므로 보존한다.
+        "llm_validation_errors.jsonl",
         "paused.json",
         "run_complete.json",
         "run_metadata.json",

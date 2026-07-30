@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+import unicodedata
 from typing import Any
 
 import config
@@ -93,7 +95,7 @@ async def community_thinking(
         seed_schedule=seeds,
         max_tokens=max_tokens,
         validation_attempts=validation_attempts,
-        validation_procedure_version="community-thinking-validator-v1",
+        validation_procedure_version="community-thinking-validator-v2",
         response_format={"type": "json_object"},
         semantic_inputs={"allowed_sources": dict(sorted(allowed_sources.items()))},
     )
@@ -286,6 +288,21 @@ def _format_posts_read(
     return "\n\n".join(lines), sources
 
 
+def _normalize_quote_text(value: str) -> str:
+    """Compare quotes with whitespace removed.
+
+    게시글 본문에는 ``21 만 6 천``처럼 띄어쓰기가 특이한 문장이 섞여 있고,
+    모델은 인용하면서 공백을 자기 스타일로 통일하는 습성이 있다. 2일 유료
+    실행에서 community_thinking 첫 시도 거부 100건이 발생했고, 실패 프롬프트를
+    그대로 5회 재호출한 프로브에서 실패 인용문 전부가 공백만 다른
+    verbatim 인용이었다(``16조나`` vs ``16 조나``). 공백을 제거한 뒤 부분
+    문자열을 검사하면 인용 계약(인용문은 인용한 노출의 실제 문자열)은
+    유지하면서 이 서식 차이만 흡수한다.
+    """
+
+    return re.sub(r"\s+", "", unicodedata.normalize("NFC", value))
+
+
 def _community_thinking_errors(
     value: dict[str, Any],
     *,
@@ -358,7 +375,8 @@ def _community_thinking_errors(
         if not isinstance(quote, str) or not quote.strip():
             errors.append(f"claims[{index}].supporting_quote:requires_nonempty_string")
         elif not any(
-            quote in allowed_sources.get(source_id, "")
+            _normalize_quote_text(quote)
+            in _normalize_quote_text(allowed_sources.get(source_id, ""))
             for source_id in source_ids
         ):
             errors.append(

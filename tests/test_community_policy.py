@@ -891,6 +891,114 @@ class CommunityBestPolicyTests(unittest.TestCase):
         self.assertEqual(rows[0]["delivery_status"], "no_eligible_recipient")
 
 
+class CommunityThinkingQuoteContractTests(unittest.TestCase):
+    """인용 검증은 공백 차이만 흡수하고 위조 인용은 계속 거부해야 한다.
+
+    2일 유료 실행에서 community_thinking 첫 시도 거부 100건, 한 agent의
+    10회 소진이 발생했다. 실패 프롬프트를 그대로 5회 재호출한 프로브에서
+    실패 인용문 전부가 공백만 다른 verbatim 인용이었다(``16조나`` vs
+    ``16 조나``).
+    """
+
+    SOURCES = {
+        "community:post:1:best_full_body": (
+            "외국인 16조 매도세에 개미들만 잔치?\n"
+            "엔비디아 쇼크에 외국인들이 16조나 팔아치우는데 주가는 여전히 꿈틀거려."
+        ),
+        "community:post:2:best_full_body": "다른 글의 본문입니다.",
+    }
+
+    def _claim(self, quote: str, sources: list[str] | None = None) -> dict:
+        return {
+            "observed_sentiment": "mixed",
+            "claims": [
+                {
+                    "claim_text": "외국인 매도에도 개인 매수가 이어진다",
+                    "claim_stance": "uncertain",
+                    "source_exposure_ids": sources or ["community:post:1:best_full_body"],
+                    "supporting_quote": quote,
+                }
+            ],
+            "agreement_disagreement": "공감과 반대가 섞여 있다",
+            "uncertainty": "외국인 수급 지속 여부",
+        }
+
+    def _quote_errors(self, value: dict) -> list[str]:
+        from twinmarket_kr.community.thinking import _community_thinking_errors
+
+        return [
+            error
+            for error in _community_thinking_errors(
+                value, allowed_sources=self.SOURCES
+            )
+            if "supporting_quote" in error
+        ]
+
+    def test_exact_quote_passes(self) -> None:
+        self.assertEqual(
+            self._quote_errors(self._claim("16조나 팔아치우는데 주가는")), []
+        )
+
+    def test_whitespace_variant_quote_passes(self) -> None:
+        # 프로브에서 관측된 실제 실패 유형: 모델이 공백만 통일해 인용
+        self.assertEqual(
+            self._quote_errors(self._claim("16 조나 팔아치우는데 주가는")), []
+        )
+        self.assertEqual(
+            self._quote_errors(
+                self._claim("엔비디아 쇼크에 외국인들이 16 조나 팔아치우는데")
+            ),
+            [],
+        )
+
+    def test_fabricated_quote_still_fails(self) -> None:
+        self.assertTrue(
+            self._quote_errors(self._claim("외국인이 곧 돌아올 것이라는 확신"))
+        )
+
+    def test_quote_from_uncited_post_still_fails(self) -> None:
+        # 인용문이 다른 글에는 있어도 인용한 노출에는 없으면 거부한다.
+        self.assertTrue(self._quote_errors(self._claim("다른 글의 본문입니다.")))
+
+    def test_whitespace_only_quote_still_fails(self) -> None:
+        self.assertTrue(self._quote_errors(self._claim("   ")))
+
+
+class ValidationLogSurvivesEventRollbackTests(unittest.TestCase):
+    """검증 거부 텔레메트리는 event 롤백에서 살아남아야 한다."""
+
+    def test_validation_log_is_a_control_artifact(self) -> None:
+        from twinmarket_kr.experiment_runtime import _CONTROL_ARTIFACTS
+
+        self.assertIn("llm_validation_errors.jsonl", _CONTROL_ARTIFACTS)
+        self.assertIn("openrouter_calls.jsonl", _CONTROL_ARTIFACTS)
+
+    def test_rollback_truncates_science_but_keeps_diagnostics(self) -> None:
+        from twinmarket_kr.experiment_runtime import (
+            capture_artifact_state,
+            restore_artifact_state,
+        )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            science = root / "agent_turns.csv"
+            diagnostics = root / "llm_validation_errors.jsonl"
+            science.write_text("header\nrow1\n", encoding="utf-8")
+            diagnostics.write_text("", encoding="utf-8")
+            state = capture_artifact_state(root)
+            # 실패한 event가 과학 원장과 진단 로그에 모두 행을 남긴다.
+            science.write_text("header\nrow1\nrow2\n", encoding="utf-8")
+            diagnostics.write_text('{"label":"community_thinking"}\n', encoding="utf-8")
+            restore_artifact_state(root, state)
+            self.assertEqual(
+                science.read_text(encoding="utf-8"), "header\nrow1\n"
+            )
+            self.assertEqual(
+                diagnostics.read_text(encoding="utf-8"),
+                '{"label":"community_thinking"}\n',
+            )
+
+
 class CommunityReadingOutputContractTests(unittest.TestCase):
     """select/react 출력 계약이 빈 배열 예시로 되돌아가지 않게 고정한다.
 
