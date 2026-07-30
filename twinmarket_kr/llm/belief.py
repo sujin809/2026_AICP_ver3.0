@@ -424,7 +424,7 @@ async def generate_short_term_belief(
     allowed_evidence_ids: set[str],
     client: OpenRouterClient | None = None,
     seed: int | None = None,
-    validation_attempts: int = 6,
+    validation_attempts: int = 10,
 ) -> dict[str, Any]:
     """Create the current-turn STB from news/community evidence only."""
 
@@ -485,7 +485,7 @@ async def update_long_term_belief(
     eligible_price_outcomes_dim_6_only: list[Mapping[str, Any]] | None = None,
     client: OpenRouterClient | None = None,
     seed: int | None = None,
-    validation_attempts: int = 6,
+    validation_attempts: int = 10,
 ) -> dict[str, Any]:
     """Recursively create LTB_t after the same-turn actual fill is committed."""
 

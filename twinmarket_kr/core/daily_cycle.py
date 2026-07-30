@@ -149,8 +149,15 @@ async def run_agent_turn(
     community_agent: Any | None = None,
     random_seed: int = config.RANDOM_SEED,
     stock_code: str = config.STOCK_CODE,
+    event_attempt_number: int | None = None,
 ) -> dict[str, Any]:
     agent_id = str(agent["agent_id"])
+    # event 재시도 번호를 시드에 넣지 않으면, 검증 예산을 소진해 죽은 호출이
+    # 재개 후에도 완전히 같은 프롬프트와 같은 시드로 다시 나가 같은 실패를
+    # 반복한다. 그러면 45일 실행이 그 지점에서 영구히 멈추고 코드를 고쳐야
+    # 하는데, 코드를 고치면 run signature가 깨져 처음부터 다시 돌려야 한다.
+    # 같은 시도 번호 안에서는 여전히 결정론적이다.
+    attempt_salt = int(event_attempt_number or 0)
     today_context = collect_context(
         agent,
         turn=turn,
@@ -198,7 +205,7 @@ async def run_agent_turn(
             agent,
             today_context["news_context"],
             client=client,
-            seed=stable_llm_seed(random_seed, agent_id, turn, "depth2_pre_search"),
+            seed=stable_llm_seed(random_seed, agent_id, turn, "depth2_pre_search", attempt_salt),
         )
         search_results = []
         post_search = {
@@ -237,7 +244,7 @@ async def run_agent_turn(
                 search_results,
                 pre_search,
                 client=client,
-                seed=stable_llm_seed(random_seed, agent_id, turn, "depth2_post_search"),
+                seed=stable_llm_seed(random_seed, agent_id, turn, "depth2_post_search", attempt_salt),
             )
         depth2_flow = {
             "step1_base": {
@@ -274,7 +281,7 @@ async def run_agent_turn(
             delivery_turn=turn,
             delivery_date=date,
             client=client,
-            seed=stable_llm_seed(random_seed, agent_id, turn, "community_thinking"),
+            seed=stable_llm_seed(random_seed, agent_id, turn, "community_thinking", attempt_salt),
         )
         if db_write_lock is not None:
             async with db_write_lock:
@@ -314,7 +321,7 @@ async def run_agent_turn(
         current_evidence=current_evidence,
         allowed_evidence_ids=allowed_evidence_ids,
         client=client,
-        seed=stable_llm_seed(random_seed, agent_id, turn, "short_term_belief"),
+        seed=stable_llm_seed(random_seed, agent_id, turn, "short_term_belief", attempt_salt),
     )
     current_stb_dimensions = belief_dimensions(
         current_stb,
@@ -365,7 +372,7 @@ async def run_agent_turn(
         portfolio_summary=today_context["portfolio_summary"],
         execution_state=constraints,
         client=client,
-        seed=stable_llm_seed(random_seed, agent_id, turn, "market_analysis"),
+        seed=stable_llm_seed(random_seed, agent_id, turn, "market_analysis", attempt_salt),
     )
     if db_write_lock is not None:
         async with db_write_lock:
@@ -397,7 +404,7 @@ async def run_agent_turn(
         constraints,
         allow_hold=decision_space != "buy_sell_only",
         client=client,
-        seed=stable_llm_seed(random_seed, agent_id, turn, "trading_decision"),
+        seed=stable_llm_seed(random_seed, agent_id, turn, "trading_decision", attempt_salt),
     )
     if db_write_lock is not None:
         async with db_write_lock:

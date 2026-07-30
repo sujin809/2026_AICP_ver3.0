@@ -517,6 +517,7 @@ async def run_simulation(
                         community_agent=community,
                         random_seed=random_seed,
                         stock_code=resolved_stock_code,
+                        event_attempt_number=event_attempt_number,
                     )
             except Exception as exc:
                 if logger is not None:
@@ -1023,6 +1024,7 @@ async def _run_subturn(
                         agent_id,
                         turn,
                         "post_fill_long_term_belief",
+                        int(event_attempt_number or 0),
                     ),
                 )
         generated["eligible_price_outcomes_dim_6_only"] = eligible_outcomes
@@ -1390,6 +1392,7 @@ async def post_trade_posting_phase(
                         agent_id,
                         turn,
                         "community_posting",
+                        int(event_attempt_number or 0),
                     ),
                 )
             if post_result is None:
@@ -1573,6 +1576,7 @@ async def community_phase(
                         agent_id,
                         turn,
                         "community_read_select",
+                        int(event_attempt_number or 0),
                     ),
                 )
             if event_logger is not None:
@@ -1641,6 +1645,7 @@ async def community_phase(
                         agent_id,
                         turn,
                         "community_read_react",
+                        int(event_attempt_number or 0),
                     ),
                 )
             reaction_map = {int(item["post_id"]): item["reaction"] for item in reactions}

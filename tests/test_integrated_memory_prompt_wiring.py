@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import unittest
 from typing import Any
 from unittest import mock
+
+from twinmarket_kr import simulation
+from twinmarket_kr.core import daily_cycle
+from twinmarket_kr.core.daily_cycle import run_agent_turn
 
 import config
 from twinmarket_kr.community.posting import posting_decision
@@ -924,14 +929,85 @@ class BeliefLimitAndRetryBudgetTests(unittest.IsolatedAsyncioTestCase):
         failing = await self._stb_attempts({**over, "dimension_evidence": evidence})
         self.assertIn("exceeds the 150-character limit (current=151)", failing.prompts[1])
 
-    async def test_production_stages_retry_six_times_before_failing(self) -> None:
+    async def test_event_retry_changes_seeds_so_a_stuck_call_can_recover(self) -> None:
+        """재개가 같은 시드로 같은 실패를 반복하면 N일 실험이 영구 정지한다."""
+
+        from twinmarket_kr.llm.client import stable_llm_seed
+
+        base = ("A001", 1, "short_term_belief")
+        first = stable_llm_seed(2, *base, 1)
+        resumed = stable_llm_seed(2, *base, 2)
+        self.assertNotEqual(first, resumed)
+        # 같은 시도 번호 안에서는 결정론적이어야 한다.
+        self.assertEqual(first, stable_llm_seed(2, *base, 1))
+
+        # 배선: run_agent_turn이 시도 번호를 받고, simulation이 그것을 넘긴다.
+        self.assertIn(
+            "event_attempt_number",
+            inspect.signature(run_agent_turn).parameters,
+        )
+        source = inspect.getsource(daily_cycle)
+        self.assertIn("attempt_salt = int(event_attempt_number or 0)", source)
+        for stage in (
+            "short_term_belief",
+            "market_analysis",
+            "trading_decision",
+            "community_thinking",
+            "depth2_pre_search",
+            "depth2_post_search",
+        ):
+            with self.subTest(stage=stage):
+                self.assertIn(f'"{stage}", attempt_salt', source)
+        sim_source = inspect.getsource(simulation)
+        self.assertIn("event_attempt_number=event_attempt_number", sim_source)
+        for stage in (
+            "post_fill_long_term_belief",
+            "community_posting",
+            "community_read_select",
+            "community_read_react",
+        ):
+            with self.subTest(stage=stage):
+                index = sim_source.index(f'"{stage}",')
+                self.assertIn(
+                    "int(event_attempt_number or 0)",
+                    sim_source[index : index + 120],
+                )
+
+        # 서로 다른 base seed가 실제 API 호출의 seed 인자까지 전달된다.
+        observed = []
+        for base_seed in (first, resumed):
+            client = _CaptureClient(
+                {**_stb_dimensions("stb"), "dimension_evidence": _evidence()}
+            )
+            await generate_short_term_belief(
+                {"agent_id": "A001", "news_depth": 1, "persona_prompt": "p"},
+                event={
+                    "event_id": "e",
+                    "turn": 1,
+                    "date": "2026-02-27",
+                    "subturn": "am",
+                },
+                current_evidence={
+                    "news": [],
+                    "depth2_search_results": [],
+                    "community_claims": [],
+                },
+                allowed_evidence_ids=set(),
+                client=client,
+                seed=base_seed,
+                validation_attempts=1,
+            )
+            observed.append(client.kwargs[0]["seed"])
+        self.assertNotEqual(observed[0], observed[1])
+
+    async def test_production_stages_retry_ten_times_before_failing(self) -> None:
         # 재시도 예산을 올려도 temperature/seed 스케줄 길이가 따라오지 않으면
         # journal 경계에서 죽는다. 실제 호출 횟수로 두 값이 함께 늘었는지 본다.
         failing = await self._stb_attempts(
             {**_stb_dimensions("stb"), "dimension_evidence": _evidence()
              | {"dim_1": {"support": ["news:missing"], "contradict": []}}}
         )
-        self.assertEqual(len(failing.prompts), 6)
+        self.assertEqual(len(failing.prompts), 10)
 
         select_client = _CaptureClient({"selected_post_ids": [999]})
         with self.assertRaises(CommunityValidationError):
@@ -942,7 +1018,7 @@ class BeliefLimitAndRetryBudgetTests(unittest.IsolatedAsyncioTestCase):
                 client=select_client,
                 seed=1,
             )
-        self.assertEqual(len(select_client.prompts), 6)
+        self.assertEqual(len(select_client.prompts), 10)
 
 
 if __name__ == "__main__":

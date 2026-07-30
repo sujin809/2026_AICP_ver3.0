@@ -86,7 +86,7 @@ async def posting_decision(
     raw: dict[str, Any] = {}
     current_prompt = prompt
     stage = "community_posting"
-    validation_attempts = 6
+    validation_attempts = 10
     temperatures = [0.7 if a == 1 else 0.3 for a in range(1, validation_attempts + 1)]
     seeds = [
         stable_llm_seed(seed or 0, "community_posting_validation", attempt)

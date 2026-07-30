@@ -131,7 +131,7 @@ async def _required_json_response(
     required_keys: tuple[str, ...],
     label: str,
     seed: int | None,
-    validation_attempts: int = 6,
+    validation_attempts: int = 10,
     validator: Callable[[dict[str, Any]], list[str]] | None = None,
     normalizer: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     schema_hint: str = "요청된 모든 JSON 키와 자료형을 정확히 지키세요.",
