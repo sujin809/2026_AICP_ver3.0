@@ -95,7 +95,7 @@ async def community_thinking(
         seed_schedule=seeds,
         max_tokens=max_tokens,
         validation_attempts=validation_attempts,
-        validation_procedure_version="community-thinking-validator-v2",
+        validation_procedure_version="community-thinking-validator-v3",
         response_format={"type": "json_object"},
         semantic_inputs={"allowed_sources": dict(sorted(allowed_sources.items()))},
     )
@@ -188,7 +188,10 @@ async def community_thinking(
             errors=errors,
             schema_hint=(
                 "observed_sentiment, claims, agreement_disagreement, uncertainty만 "
-                "가진 JSON object를 출력하세요."
+                "가진 JSON object를 출력하세요. supporting_quote는 위 게시글의 "
+                "제목이나 본문에서 연속된 한 구절을 그대로 복사하세요. 여러 "
+                "문장을 이어붙이거나 바꿔 쓰면 실패합니다. 확실하지 않으면 "
+                "10~20자의 짧은 구절만 그대로 인용하세요."
             ),
         )
     raise CommunityValidationError(
@@ -375,12 +378,16 @@ def _community_thinking_errors(
         if not isinstance(quote, str) or not quote.strip():
             errors.append(f"claims[{index}].supporting_quote:requires_nonempty_string")
         elif not any(
-            _normalize_quote_text(quote)
-            in _normalize_quote_text(allowed_sources.get(source_id, ""))
-            for source_id in source_ids
+            _normalize_quote_text(quote) in _normalize_quote_text(text)
+            for text in allowed_sources.values()
         ):
+            # 인용문이 이 agent에게 실제 배달된 어떤 full-body 노출에도 없으면
+            # 위조다. 인용한 글과 다른 배달 글에서 발췌한 경우는 통과시킨다 —
+            # 2일 유료 실행에서 한 agent가 진짜 인용문의 출처 ID만 틀려서
+            # 10회를 소진했다. 출처 귀속의 정밀도는 분석 단계에서 확인하고,
+            # 여기서는 위조(배달되지 않은 텍스트)만 fail-closed로 막는다.
             errors.append(
-                f"claims[{index}].supporting_quote:not_in_cited_exposure"
+                f"claims[{index}].supporting_quote:not_in_any_delivered_exposure"
             )
     return errors
 

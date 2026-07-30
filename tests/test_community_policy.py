@@ -956,9 +956,20 @@ class CommunityThinkingQuoteContractTests(unittest.TestCase):
             self._quote_errors(self._claim("외국인이 곧 돌아올 것이라는 확신"))
         )
 
-    def test_quote_from_uncited_post_still_fails(self) -> None:
-        # 인용문이 다른 글에는 있어도 인용한 노출에는 없으면 거부한다.
-        self.assertTrue(self._quote_errors(self._claim("다른 글의 본문입니다.")))
+    def test_quote_from_other_delivered_post_passes(self) -> None:
+        # 인용문이 인용한 글이 아니라도 실제 배달된 글에 있으면 위조가 아니다.
+        # 라이브에서 진짜 인용문의 출처 ID만 틀려 10회 소진이 발생했다.
+        self.assertEqual(
+            self._quote_errors(self._claim("다른 글의 본문입니다.")), []
+        )
+
+    def test_spliced_quote_still_fails(self) -> None:
+        # 실제 구절로 시작해 자기 말을 이어붙인 짜깁기는 거부한다.
+        self.assertTrue(
+            self._quote_errors(
+                self._claim("16조나 팔아치우는데 결국 개인이 승리할 것입니다")
+            )
+        )
 
     def test_whitespace_only_quote_still_fails(self) -> None:
         self.assertTrue(self._quote_errors(self._claim("   ")))
