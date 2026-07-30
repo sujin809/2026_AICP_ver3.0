@@ -110,6 +110,10 @@ async def community_thinking(
             },
         },
     )
+    if journal_call is not None:
+        # retry 계보가 열렸으면 시드가 변주된다. journal 요청 identity와
+        # 실제 API 호출이 같은 스케줄을 쓰도록 여기서 덮어쓴다.
+        seeds = list(journal_call.seed_schedule)
     if journal_call is not None and journal_call.replay is not None:
         content = dict(journal_call.replay.response)
         errors = _community_thinking_errors(

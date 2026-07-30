@@ -586,3 +586,89 @@ def test_runner_forbids_no_logs_for_online_run(
     )
     with pytest.raises(ValueError, match="development-only"):
         asyncio.run(runner._run(args))
+
+
+def test_event_retry_reseeds_only_unaccepted_calls(tmp_path: Path) -> None:
+    """미수락 호출만 retry 계보로 재시드되고, 수락 호출은 정확히 replay된다.
+
+    라이브 resume에서 base 시드를 통째로 바꾸는 이전 설계는 수락된 호출의
+    replay까지 drift로 깨뜨려 100 agent 전원이 실패했다.
+    """
+
+    from twinmarket_kr.community.reading import community_reading_select
+
+    journal = ResponseJournal(tmp_path / "journal.sqlite", manifest_sha256="b" * 64)
+    posts = [{"post_id": 1, "title": "t", "post_type": "analysis"}]
+
+    # event attempt 1: 항상 무효(post 999)만 내는 클라이언트 → 10회 소진
+    bad = FakeClient([{"selected_post_ids": [999]} for _ in range(10)])
+    with _scope(journal, phase="phase-1"):
+        with pytest.raises(Exception):
+            asyncio.run(
+                community_reading_select(_agent(), posts, 5, client=bad, seed=7)
+            )
+    attempt1_seeds = [call["seed"] for call in bad.calls]
+    assert len(attempt1_seeds) == 10
+
+    # event attempt 2: 유효 응답 → retry 계보(새 논리 호출, 변주 시드)로 수락
+    good = FakeClient([{"selected_post_ids": [1]}])
+    with _scope(journal, phase="phase-2"):
+        selected = asyncio.run(
+            community_reading_select(_agent(), posts, 5, client=good, seed=7)
+        )
+    assert selected == [1]
+    attempt2_seeds = [call["seed"] for call in good.calls]
+    assert attempt2_seeds and attempt2_seeds[0] != attempt1_seeds[0]
+    assert set(attempt2_seeds).isdisjoint(attempt1_seeds)
+
+    with sqlite3.connect(journal.path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            "SELECT schema_version, validation_status FROM logical_responses"
+            " WHERE stage='community_read_select' ORDER BY schema_version"
+        ).fetchall()
+    versions = {str(r["schema_version"]): str(r["validation_status"]) for r in rows}
+    assert len(versions) == 2
+    base = [v for v in versions if "+retry" not in v][0]
+    retry = [v for v in versions if v.endswith("+retry1")][0]
+    assert versions[base] == "pending"      # 소진된 계보는 그대로 보존
+    assert versions[retry] == "accepted"    # 새 계보에서 수락
+
+    # event attempt 3에서는 수락된 retry1 계보가 그대로 replay돼야 한다.
+    silent = FakeClient([])  # 호출되면 AssertionError
+    scope3 = response_journal_scope(
+        journal=journal,
+        run_id="run-1",
+        condition_id="RN_COMM_ON",
+        event_id="2026-02-27/AM",
+        phase_attempt_id="phase-3",
+        event_attempt_number=3,
+        agent_id="A001",
+    )
+    with scope3:
+        replayed = asyncio.run(
+            community_reading_select(_agent(), posts, 5, client=silent, seed=7)
+        )
+    assert replayed == [1]
+    assert silent.calls == []
+
+
+def test_event_retry_replays_accepted_base_call_without_drift(tmp_path: Path) -> None:
+    """attempt 1에서 수락된 호출은 attempt 2에서 base key로 무료 replay된다."""
+
+    from twinmarket_kr.community.reading import community_reading_select
+
+    journal = ResponseJournal(tmp_path / "journal.sqlite", manifest_sha256="c" * 64)
+    posts = [{"post_id": 1, "title": "t", "post_type": "analysis"}]
+    good = FakeClient([{"selected_post_ids": [1]}])
+    with _scope(journal, phase="phase-1"):
+        assert asyncio.run(
+            community_reading_select(_agent(), posts, 5, client=good, seed=7)
+        ) == [1]
+
+    silent = FakeClient([])
+    with _scope(journal, phase="phase-2"):
+        assert asyncio.run(
+            community_reading_select(_agent(), posts, 5, client=silent, seed=7)
+        ) == [1]
+    assert silent.calls == []  # drift 없이 replay — 이전 설계에서는 여기서 실패

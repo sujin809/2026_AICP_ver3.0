@@ -309,6 +309,10 @@ async def _generate_hierarchical_belief(
                 errors.append("every_due_outcome_must_be_cited_once_in_dim_6")
         return dimensions, evidence, errors
 
+    if journal_call is not None:
+        # retry 계보가 열렸으면 시드가 변주된다. journal 요청 identity와
+        # 실제 API 호출이 같은 스케줄을 쓰도록 여기서 덮어쓴다.
+        seeds = list(journal_call.seed_schedule)
     if journal_call is not None and journal_call.replay is not None:
         raw = dict(journal_call.replay.response)
         dimensions, evidence, errors = _validate(raw)
@@ -418,6 +422,14 @@ async def _generate_hierarchical_belief(
                     " 정해져 있습니다: action_aligned_markout가 양수면 support,"
                     " 음수면 contradict에 정확히 한 번씩 넣으세요."
                     if required_dim_6_outcome_ids
+                    else ""
+                )
+                # day2 PM 라이브에서 관점이 유지된 agent가 이전 LTB 문장을
+                # 복사해 recursively_rewritten 위반으로 소진 직전까지 갔다.
+                + (
+                    " 지적된 차원은 이전 문장을 복사하지 말고, 같은 관점이라도"
+                    " 그 이유를 담은 다른 표현의 새 문장으로 다시 쓰세요."
+                    if previous_dimensions is not None
                     else ""
                 )
             ),

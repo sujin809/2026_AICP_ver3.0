@@ -12,7 +12,7 @@ import hashlib
 import json
 import sqlite3
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, Mapping
@@ -317,6 +317,23 @@ class ResponseJournal:
                 f"semantic request drift for {key.stage} at {key.event_id}/{key.agent_id}"
             )
         return logical_id, request_sha, request_json
+
+    def call_state(self, key: LogicalCallKey) -> str:
+        """Return 'absent', 'accepted', or 'unaccepted' without creating a row."""
+
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT validation_status FROM logical_responses"
+                " WHERE logical_call_id = ?",
+                (key.value(),),
+            ).fetchone()
+        if row is None:
+            return "absent"
+        return (
+            "accepted"
+            if str(row["validation_status"]) == "accepted"
+            else "unaccepted"
+        )
 
     def get_accepted(
         self,
@@ -694,6 +711,10 @@ class JournalCall:
     key: LogicalCallKey
     request: dict[str, Any]
     replay: JournalReplay | None
+    # retry 계보가 열리면 base 시드가 event 재시도 번호로 변주된다. 호출부는
+    # 자신의 로컬 스케줄 대신 반드시 이 스케줄을 사용해야 요청 identity와
+    # 실제 API 호출이 일치한다.
+    seed_schedule: list[int] = field(default_factory=list)
 
     @property
     def logical_call_id(self) -> str:
@@ -767,6 +788,18 @@ class JournalCall:
         )
 
 
+def _retry_lineage_seed(seed: int, retry_number: int) -> int:
+    """Derive a deterministic per-lineage seed without importing the client."""
+
+    payload = f"{int(seed)}|event-retry-lineage|{int(retry_number)}"
+    return (
+        int.from_bytes(
+            hashlib.sha256(payload.encode("utf-8")).digest()[:4], "big"
+        )
+        & 0x7FFFFFFF
+    )
+
+
 def _record_provider_acceptance(
     client: Any,
     *,
@@ -815,19 +848,7 @@ def open_journal_call(
     request_policy_fn = getattr(client, "request_policy", None)
     request_policy = request_policy_fn() if callable(request_policy_fn) else {}
     resolved_model = str(model or getattr(client, "model", "") or "unspecified")
-    request = {
-        "base_prompt": base_prompt,
-        "semantic_inputs": dict(semantic_inputs or {}),
-        "model": resolved_model,
-        "temperature_schedule": [float(value) for value in temperature_schedule],
-        "seed_schedule": [int(value) for value in seed_schedule],
-        "max_tokens": int(max_tokens),
-        "response_format": dict(response_format or {"type": "json_object"}),
-        "request_policy": request_policy,
-        "validation_attempts": int(validation_attempts),
-        "validation_procedure_version": validation_procedure_version,
-    }
-    key = LogicalCallKey(
+    base_key = LogicalCallKey(
         run_id=context.run_id,
         condition_id=context.condition_id,
         agent_id=context.agent_id,
@@ -835,12 +856,62 @@ def open_journal_call(
         stage=stage,
         schema_version=schema_version,
     )
+    # ── retry 계보 ──────────────────────────────────────────────────────
+    # journal은 논리 호출마다 요청(시드 포함)을 고정하고 다르면 drift로
+    # 거부한다. 그래서 event 재시도에서 base 시드를 통째로 바꾸면 이미
+    # 수락된 호출의 replay까지 깨진다(라이브 resume에서 100 agent 전원
+    # drift로 실패 관측). 대신 수락되지 못한 호출만 event 재시도 번호가
+    # 붙은 새 논리 호출(schema_version+retryN)로 열어 변주된 시드를 쓰고,
+    # 수락된 호출은 원래 key·원래 요청으로 정확히 replay한다.
+    key = base_key
+    effective_seed_schedule = [int(value) for value in seed_schedule]
+    if context.event_attempt_number > 1:
+        chosen: LogicalCallKey | None = None
+        for retry_number in range(0, context.event_attempt_number):
+            candidate = (
+                base_key
+                if retry_number == 0
+                else replace(
+                    base_key,
+                    schema_version=f"{schema_version}+retry{retry_number}",
+                )
+            )
+            state = context.journal.call_state(candidate)
+            if state in ("accepted", "absent"):
+                chosen = candidate
+                break
+        if chosen is None:
+            retry_number = context.event_attempt_number - 1
+            chosen = replace(
+                base_key,
+                schema_version=f"{schema_version}+retry{retry_number}",
+            )
+        key = chosen
+        if key.schema_version != schema_version:
+            lineage = int(key.schema_version.rsplit("+retry", 1)[1])
+            effective_seed_schedule = [
+                _retry_lineage_seed(value, lineage)
+                for value in effective_seed_schedule
+            ]
+    request = {
+        "base_prompt": base_prompt,
+        "semantic_inputs": dict(semantic_inputs or {}),
+        "model": resolved_model,
+        "temperature_schedule": [float(value) for value in temperature_schedule],
+        "seed_schedule": list(effective_seed_schedule),
+        "max_tokens": int(max_tokens),
+        "response_format": dict(response_format or {"type": "json_object"}),
+        "request_policy": request_policy,
+        "validation_attempts": int(validation_attempts),
+        "validation_procedure_version": validation_procedure_version,
+    }
     replay = context.journal.get_accepted(key, request)
     return JournalCall(
         context=context,
         key=key,
         request=request,
         replay=replay,
+        seed_schedule=list(effective_seed_schedule),
     )
 
 
