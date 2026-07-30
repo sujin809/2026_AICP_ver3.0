@@ -33,8 +33,9 @@
 입력에는 어제 Best로 전달된 글과 어제 내가 직접 선택해 읽은 글의 제목·본문만 들어 있습니다. 둘 다 본문까지 제공된 `full_body` 노출입니다.
 선택 화면에서 제목만 스쳐 본 후보 글은 이 단계의 입력이 아니며, 그런 글을 본 것처럼 인용하지 마세요.
 각 주장은 입력에 실제 포함된 source_exposure_id를 최소 한 개 인용해야 합니다.
+게시글의 제목과 각 문장 앞에는 [인용 N] 번호가 붙어 있습니다. 각 claim의 근거 문장은 이 번호로 지정합니다.
 입력에 없는 게시글이나 노출 ID를 실제로 본 것처럼 만들어내지 마세요.
-각 claim의 supporting_quote는 인용한 노출 중 하나의 제목 또는 본문에서 그대로 복사한 비어 있지 않은 부분 문자열이어야 합니다.
+각 claim의 supporting_quote_ref는 위 게시글에 [인용 N]으로 표시된 번호 중, 그 주장을 뒷받침하는 문장 하나의 번호(정수)여야 합니다. 문장을 직접 옮겨 쓰지 말고 번호만 고르세요.
 
 필수 JSON 키:
 - observed_sentiment: "optimistic", "pessimistic", "mixed", "overheated", "anxious", "uncertain" 중 하나.
@@ -42,7 +43,7 @@
   - claim_text: 커뮤니티에서 관찰한 투자 관련 주장 또는 심리 신호를 짧게 서술한 문자열.
   - claim_stance: "bullish", "bearish", "neutral", "uncertain" 중 하나.
   - source_exposure_ids: 위 claim의 근거가 실제 들어 있는 source_exposure_id의 중복 없는 문자열 배열.
-  - supporting_quote: 위 source_exposure_ids 중 하나의 허용된 제목 또는 본문에서 그대로 복사한 비어 있지 않은 문자열.
+  - supporting_quote_ref: 위 게시글에 [인용 N]으로 표시된 번호 중 하나(정수). 그 번호의 문장이 주장의 근거입니다.
 - agreement_disagreement: 공감한 점과 반대한 점을 함께 짧게 정리한 문자열.
 - uncertainty: 커뮤니티 정보에서 여전히 불확실하거나 경계할 점을 적은 문자열.
 

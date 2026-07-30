@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import re
-import unicodedata
 from typing import Any
 
 import config
@@ -47,6 +46,7 @@ async def community_thinking(
         for post in best_posts
         if post.get("post_id") is not None
     }
+    quotable_registry: dict[int, dict[str, Any]] = {}
     best_summary, best_sources = _format_best_posts(
         best_posts,
         selected_by_id=selected_by_id,
@@ -54,6 +54,7 @@ async def community_thinking(
         source_turn=source_turn,
         source_date=source_date,
         delivery_turn=delivery_turn,
+        quotable_registry=quotable_registry,
     )
     read_summary, read_sources = _format_posts_read(
         posts_read,
@@ -62,6 +63,7 @@ async def community_thinking(
         source_turn=source_turn,
         source_date=source_date,
         delivery_turn=delivery_turn,
+        quotable_registry=quotable_registry,
     )
     allowed_sources = {
         **best_sources,
@@ -95,18 +97,34 @@ async def community_thinking(
         seed_schedule=seeds,
         max_tokens=max_tokens,
         validation_attempts=validation_attempts,
-        validation_procedure_version="community-thinking-validator-v3",
+        validation_procedure_version="community-thinking-validator-v4",
         response_format={"type": "json_object"},
-        semantic_inputs={"allowed_sources": dict(sorted(allowed_sources.items()))},
+        semantic_inputs={
+            "allowed_sources": dict(sorted(allowed_sources.items())),
+            "quotable_registry": {
+                str(ref): [
+                    sorted(entry["exposure_ids"]),
+                    entry["sentence"],
+                ]
+                for ref, entry in sorted(quotable_registry.items())
+            },
+        },
     )
     if journal_call is not None and journal_call.replay is not None:
         content = dict(journal_call.replay.response)
-        errors = _community_thinking_errors(content, allowed_sources=allowed_sources)
+        errors = _community_thinking_errors(
+            content,
+            allowed_sources=allowed_sources,
+            quotable_registry=quotable_registry,
+        )
         if errors:
             raise ResponseJournalError(
                 f"accepted replay no longer passes community thinking: {errors}"
             )
         journal_call.repair_replay_acceptance(client=client)
+        content = materialize_claim_quotes(
+            content, quotable_registry=quotable_registry
+        )
         content["source_turn"] = source_turn
         content["source_date"] = source_date
         content["delivery_turn"] = int(delivery_turn)
@@ -158,6 +176,7 @@ async def community_thinking(
             *_community_thinking_errors(
                 content,
                 allowed_sources=allowed_sources,
+                quotable_registry=quotable_registry,
             ),
         ]
         if not errors:
@@ -165,6 +184,9 @@ async def community_thinking(
                 if raw is None:
                     raise AssertionError("validated response has no raw JSON object")
                 journal_call.accept(raw, attempt, client=client)
+            content = materialize_claim_quotes(
+                content, quotable_registry=quotable_registry
+            )
             content["source_turn"] = source_turn
             content["source_date"] = source_date
             content["delivery_turn"] = int(delivery_turn)
@@ -188,15 +210,69 @@ async def community_thinking(
             errors=errors,
             schema_hint=(
                 "observed_sentiment, claims, agreement_disagreement, uncertainty만 "
-                "가진 JSON object를 출력하세요. supporting_quote는 위 게시글의 "
-                "제목이나 본문에서 연속된 한 구절을 그대로 복사하세요. 여러 "
-                "문장을 이어붙이거나 바꿔 쓰면 실패합니다. 확실하지 않으면 "
-                "10~20자의 짧은 구절만 그대로 인용하세요."
+                "가진 JSON object를 출력하세요. 각 claim의 supporting_quote_ref는 "
+                "위 게시글에 [인용 N]으로 표시된 번호 중 하나의 정수입니다. "
+                "문장을 직접 쓰지 말고 번호만 고르세요."
             ),
         )
     raise CommunityValidationError(
         f"community thinking did not satisfy the structured claim contract after {validation_attempts} attempts"
     )
+
+
+# 인용을 자유 문자열 복사로 받으면 reasoning-off 경량 모델이 구조적으로
+# 실패한다(공백 통일, 조사 변경, 짜깁기 — 세 번의 유료 실행 실패 전부 이
+# 지점). 파이프라인의 다른 모든 근거(뉴스·검색·outcome)는 ID 인용 + 시스템
+# 조회 패턴이라 이 실패가 없다. 커뮤니티 인용도 같은 패턴으로 맞춘다:
+# 게시글을 문장 단위로 쪼개 [인용 N] 번호를 붙여 보여주고, 모델은 번호만
+# 고르고, 시스템이 번호로 원문 문장을 꺼내 기록한다. 인용문은 구조상 항상
+# verbatim이고, 모델의 원시 응답은 journal에 남아 연구자가 사후 분석할 수
+# 있다.
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?…])\s+|\n+")
+
+
+def _split_sentences(text: str) -> list[str]:
+    return [
+        part.strip()
+        for part in _SENTENCE_BOUNDARY.split(text.strip())
+        if part.strip()
+    ]
+
+
+def _register_quotables(
+    registry: dict[int, dict[str, Any]],
+    *,
+    exposure_ids: list[str],
+    post_id: int,
+    title: str,
+    body: str,
+) -> tuple[int | None, list[tuple[int, str]]]:
+    """Assign [인용 N] numbers to a post's title and body sentences."""
+
+    title_ref: int | None = None
+    if title.strip():
+        title_ref = len(registry) + 1
+        registry[title_ref] = {
+            "exposure_ids": list(exposure_ids),
+            "post_id": post_id,
+            "kind": "title",
+            "sentence": title.strip(),
+        }
+    body_refs: list[tuple[int, str]] = []
+    for sentence in _split_sentences(body):
+        ref = len(registry) + 1
+        registry[ref] = {
+            "exposure_ids": list(exposure_ids),
+            "post_id": post_id,
+            "kind": "body",
+            "sentence": sentence,
+        }
+        body_refs.append((ref, sentence))
+    return title_ref, body_refs
+
+
+def _render_marked_body(body_refs: list[tuple[int, str]]) -> str:
+    return " ".join(f"[인용 {ref}] {sentence}" for ref, sentence in body_refs)
 
 
 def _format_best_posts(
@@ -207,7 +283,11 @@ def _format_best_posts(
     source_turn: int,
     source_date: str,
     delivery_turn: int,
+    quotable_registry: dict[int, dict[str, Any]] | None = None,
 ) -> tuple[str, dict[str, str]]:
+    quotable_registry = (
+        quotable_registry if quotable_registry is not None else {}
+    )
     if not best_posts:
         return "(어제 Best 게시글 없음)", {}
     selected_by_id = selected_by_id or {}
@@ -230,6 +310,7 @@ def _format_best_posts(
         body = str(post.get("content") or "")
         body_text = f"{title}\n{body}"
         sources[exposure_id] = body_text
+        exposure_ids = [exposure_id]
         exposure_lines = [f"- source_exposure_id: {exposure_id}"]
         if selected is not None:
             # 같은 글이 Best와 직접 선택 두 관계에 모두 해당하면 본문은 여기서 한 번만
@@ -239,15 +320,24 @@ def _format_best_posts(
                 f"selected_full_body_replay:{agent_id}:delivered_t{delivery_turn}"
             )
             sources[replay_exposure_id] = body_text
+            exposure_ids.append(replay_exposure_id)
             exposure_lines.append(
                 f"- source_exposure_id: {replay_exposure_id} (같은 글을 전날 직접 선택해 읽은 관계)"
             )
+        title_ref, body_refs = _register_quotables(
+            quotable_registry,
+            exposure_ids=exposure_ids,
+            post_id=post_id,
+            title=title,
+            body=body,
+        )
+        title_marker = f"[인용 {title_ref}] " if title_ref is not None else ""
         lines.append(
             "\n".join(exposure_lines) + "\n"
             f"  Best {post.get('rank', '')} [{post.get('post_type', '')}] "
-            f"{title} (score: {post.get('score', 0)})\n"
+            f"{title_marker}{title} (score: {post.get('score', 0)})\n"
             f"  작성자: {post.get('anonymous_code', '')}{reaction}\n"
-            f"  본문 전체: {body}{profile}"
+            f"  본문 전체: {_render_marked_body(body_refs)}{profile}"
         )
     return "\n\n".join(lines), sources
 
@@ -260,7 +350,11 @@ def _format_posts_read(
     source_turn: int,
     source_date: str,
     delivery_turn: int,
+    quotable_registry: dict[int, dict[str, Any]] | None = None,
 ) -> tuple[str, dict[str, str]]:
+    quotable_registry = (
+        quotable_registry if quotable_registry is not None else {}
+    )
     excluded_post_ids = excluded_post_ids or set()
     visible_posts = [
         post
@@ -281,35 +375,53 @@ def _format_posts_read(
         title = str(post.get("title") or "")
         body = str(post.get("content") or "")
         sources[exposure_id] = f"{title}\n{body}"
+        title_ref, body_refs = _register_quotables(
+            quotable_registry,
+            exposure_ids=[exposure_id],
+            post_id=post_id,
+            title=title,
+            body=body,
+        )
+        title_marker = f"[인용 {title_ref}] " if title_ref is not None else ""
         lines.append(
             f"- source_exposure_id: {exposure_id}\n"
-            f"  [{post.get('post_type', '')}] {title} | "
+            f"  [{post.get('post_type', '')}] {title_marker}{title} | "
             f"내 반응: {post.get('reaction', 'none')}\n"
             f"  작성자: {post.get('anonymous_code', '')}\n"
-            f"  본문 전체: {body}{profile}"
+            f"  본문 전체: {_render_marked_body(body_refs)}{profile}"
         )
     return "\n\n".join(lines), sources
 
 
-def _normalize_quote_text(value: str) -> str:
-    """Compare quotes with whitespace removed.
+def materialize_claim_quotes(
+    content: dict[str, Any],
+    *,
+    quotable_registry: dict[int, dict[str, Any]],
+) -> dict[str, Any]:
+    """Resolve each claim's [인용 N] reference into the verbatim source sentence.
 
-    게시글 본문에는 ``21 만 6 천``처럼 띄어쓰기가 특이한 문장이 섞여 있고,
-    모델은 인용하면서 공백을 자기 스타일로 통일하는 습성이 있다. 2일 유료
-    실행에서 community_thinking 첫 시도 거부 100건이 발생했고, 실패 프롬프트를
-    그대로 5회 재호출한 프로브에서 실패 인용문 전부가 공백만 다른
-    verbatim 인용이었다(``16조나`` vs ``16 조나``). 공백을 제거한 뒤 부분
-    문자열을 검사하면 인용 계약(인용문은 인용한 노출의 실제 문자열)은
-    유지하면서 이 서식 차이만 흡수한다.
+    ``supporting_quote``는 모델 출력이 아니라 시스템이 번호로 조회한 원문
+    문장이므로 구조상 항상 verbatim이다. 모델이 인용 번호의 글과 다른 글을
+    출처로 적었으면 번호가 가리키는 실제 노출 ID를 출처 목록에 보충한다.
+    모델의 원시 응답은 journal에 그대로 남아 연구자가 대조할 수 있다.
     """
 
-    return re.sub(r"\s+", "", unicodedata.normalize("NFC", value))
+    for claim in content.get("claims") or []:
+        entry = quotable_registry[int(claim["supporting_quote_ref"])]
+        claim["supporting_quote"] = str(entry["sentence"])
+        source_ids = claim["source_exposure_ids"]
+        if not any(
+            exposure_id in source_ids for exposure_id in entry["exposure_ids"]
+        ):
+            source_ids.append(str(entry["exposure_ids"][0]))
+    return content
 
 
 def _community_thinking_errors(
     value: dict[str, Any],
     *,
     allowed_sources: dict[str, str],
+    quotable_registry: dict[int, dict[str, Any]],
 ) -> list[str]:
     required = {
         "observed_sentiment",
@@ -344,7 +456,7 @@ def _community_thinking_errors(
             "claim_text",
             "claim_stance",
             "source_exposure_ids",
-            "supporting_quote",
+            "supporting_quote_ref",
         }
         if not isinstance(claim, dict) or set(claim) != expected:
             errors.append(f"claims[{index}]:invalid_schema")
@@ -374,20 +486,14 @@ def _community_thinking_errors(
             errors.append(
                 f"claims[{index}].source_exposure_ids:unknown:{sorted(unknown)}"
             )
-        quote = claim["supporting_quote"]
-        if not isinstance(quote, str) or not quote.strip():
-            errors.append(f"claims[{index}].supporting_quote:requires_nonempty_string")
-        elif not any(
-            _normalize_quote_text(quote) in _normalize_quote_text(text)
-            for text in allowed_sources.values()
-        ):
-            # 인용문이 이 agent에게 실제 배달된 어떤 full-body 노출에도 없으면
-            # 위조다. 인용한 글과 다른 배달 글에서 발췌한 경우는 통과시킨다 —
-            # 2일 유료 실행에서 한 agent가 진짜 인용문의 출처 ID만 틀려서
-            # 10회를 소진했다. 출처 귀속의 정밀도는 분석 단계에서 확인하고,
-            # 여기서는 위조(배달되지 않은 텍스트)만 fail-closed로 막는다.
+        ref = claim["supporting_quote_ref"]
+        if isinstance(ref, bool) or not isinstance(ref, int):
             errors.append(
-                f"claims[{index}].supporting_quote:not_in_any_delivered_exposure"
+                f"claims[{index}].supporting_quote_ref:requires_integer"
+            )
+        elif ref not in quotable_registry:
+            errors.append(
+                f"claims[{index}].supporting_quote_ref:unknown_ref:{ref}"
             )
     return errors
 

@@ -1075,10 +1075,26 @@ def _offline_response(messages: list[dict[str, str]]) -> str:
             ensure_ascii=False,
         )
     if "observed_sentiment" in prompt and "source_exposure_id" in prompt:
+        # 실제 렌더링처럼 [인용 N] 번호와 노출 ID를 읽어 claim 하나를 만든다.
+        # 번호 인용 계약(supporting_quote_ref)이 스텁에서도 검증되게 한다.
+        quote_refs = [int(v) for v in re.findall(r"\[인용 (\d+)\]", prompt)]
+        exposure_ids = re.findall(r"source_exposure_id: (\S+)", prompt)
+        claims = (
+            [
+                {
+                    "claim_text": "커뮤니티에서 반복 관찰된 주장을 정리했다.",
+                    "claim_stance": "uncertain",
+                    "source_exposure_ids": [exposure_ids[0]],
+                    "supporting_quote_ref": quote_refs[0],
+                }
+            ]
+            if quote_refs and exposure_ids
+            else []
+        )
         return json.dumps(
             {
                 "observed_sentiment": "uncertain",
-                "claims": [],
+                "claims": claims,
                 "agreement_disagreement": "검증 가능한 주장 없이 분위기만 관찰했다.",
                 "uncertainty": "커뮤니티 글만으로 거래 방향을 단정하지 않는다.",
             },

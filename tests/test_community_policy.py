@@ -892,87 +892,203 @@ class CommunityBestPolicyTests(unittest.TestCase):
 
 
 class CommunityThinkingQuoteContractTests(unittest.TestCase):
-    """인용 검증은 공백 차이만 흡수하고 위조 인용은 계속 거부해야 한다.
+    """번호 인용 계약: 모델은 [인용 N]을 고르고 시스템이 원문을 조회한다.
 
-    2일 유료 실행에서 community_thinking 첫 시도 거부 100건, 한 agent의
-    10회 소진이 발생했다. 실패 프롬프트를 그대로 5회 재호출한 프로브에서
-    실패 인용문 전부가 공백만 다른 verbatim 인용이었다(``16조나`` vs
-    ``16 조나``).
+    자유 문자열 인용은 reasoning-off 경량 모델이 구조적으로 실패하는 과제였다
+    (공백 통일·조사 변경·짜깁기로 세 번의 유료 실행이 중단). 다른 모든 근거
+    (뉴스·검색·outcome)와 같은 ID 인용 + 시스템 조회 패턴으로 통일한다.
     """
 
-    SOURCES = {
-        "community:post:1:best_full_body": (
-            "외국인 16조 매도세에 개미들만 잔치?\n"
-            "엔비디아 쇼크에 외국인들이 16조나 팔아치우는데 주가는 여전히 꿈틀거려."
-        ),
-        "community:post:2:best_full_body": "다른 글의 본문입니다.",
-    }
+    BODY_S1 = "엔비디아 쇼크에 외국인들이 16조나 팔아치우는데 주가는 여전히 꿈틀거려."
+    BODY_S2 = "그래도 저평가 구간이라는 생각은 변함없습니다."
 
-    def _claim(self, quote: str, sources: list[str] | None = None) -> dict:
+    def _community_log(self, *, overlap: bool = False) -> dict:
+        best = [
+            {
+                "post_id": 1,
+                "rank": 1,
+                "score": 3,
+                "post_type": "analysis",
+                "title": "외국인 16조 매도세에 개미들만 잔치?",
+                "content": f"{self.BODY_S1} {self.BODY_S2}",
+                "anonymous_code": "곰-1001",
+            }
+        ]
+        read = [
+            {
+                "post_id": 2,
+                "post_type": "impression",
+                "title": "다른 글 제목",
+                "content": "다른 글의 본문입니다.",
+                "reaction": "like",
+                "anonymous_code": "여우-2002",
+            }
+        ]
+        if overlap:
+            read.append({**best[0], "reaction": "like"})
+        return {
+            "turn": 2,
+            "date": "2026-02-27",
+            "best_posts_seen": best,
+            "posts_read": read,
+        }
+
+    def _run(self, response: dict, *, overlap: bool = False) -> dict:
+        from twinmarket_kr.community.thinking import community_thinking
+
+        class _Client:
+            def __init__(self) -> None:
+                self.prompts: list[str] = []
+
+            async def chat(self, messages, **_kwargs):
+                self.prompts.append(messages[-1]["content"])
+                return json.dumps(response, ensure_ascii=False)
+
+        client = _Client()
+        result = asyncio.run(
+            community_thinking(
+                {"agent_id": "A999", "persona_prompt": "페르소나"},
+                self._community_log(overlap=overlap),
+                delivery_turn=3,
+                delivery_date="2026-03-03",
+                client=client,
+            )
+        )
+        return {"result": result, "prompt": client.prompts[0]}
+
+    def _payload(self, ref, sources: list[str] | None = None) -> dict:
         return {
             "observed_sentiment": "mixed",
             "claims": [
                 {
                     "claim_text": "외국인 매도에도 개인 매수가 이어진다",
                     "claim_stance": "uncertain",
-                    "source_exposure_ids": sources or ["community:post:1:best_full_body"],
-                    "supporting_quote": quote,
+                    "source_exposure_ids": sources
+                    or [
+                        "community:2026-02-27:t2:post:1:best_full_body:A999:delivered_t3"
+                    ],
+                    "supporting_quote_ref": ref,
                 }
             ],
             "agreement_disagreement": "공감과 반대가 섞여 있다",
             "uncertainty": "외국인 수급 지속 여부",
         }
 
-    def _quote_errors(self, value: dict) -> list[str]:
+    def test_prompt_numbers_titles_and_sentences_sequentially(self) -> None:
+        run = self._run(self._payload(2))
+        prompt = run["prompt"]
+        # 글1: 제목=1, 본문 두 문장=2,3 / 글2: 제목=4, 본문=5
+        self.assertIn("[인용 1] 외국인 16조 매도세에 개미들만 잔치?", prompt)
+        self.assertIn(f"[인용 2] {self.BODY_S1}", prompt)
+        self.assertIn(f"[인용 3] {self.BODY_S2}", prompt)
+        self.assertIn("[인용 4] 다른 글 제목", prompt)
+        self.assertIn("[인용 5] 다른 글의 본문입니다.", prompt)
+
+    def test_ref_is_materialized_into_the_exact_source_sentence(self) -> None:
+        run = self._run(self._payload(2))
+        claim = run["result"]["claims"][0]
+        # 시스템이 조회한 원문이므로 구조상 항상 verbatim이다.
+        self.assertEqual(claim["supporting_quote"], self.BODY_S1)
+        self.assertEqual(claim["supporting_quote_ref"], 2)
+
+    def test_misattributed_source_is_healed_from_the_ref(self) -> None:
+        # 라이브 실패 유형: 진짜 인용을 하고 출처 ID만 다른 글을 지목.
+        # 번호가 가리키는 실제 노출 ID를 시스템이 보충한다.
+        run = self._run(
+            self._payload(
+                5,
+                sources=[
+                    "community:2026-02-27:t2:post:1:best_full_body:A999:delivered_t3"
+                ],
+            )
+        )
+        claim = run["result"]["claims"][0]
+        self.assertEqual(claim["supporting_quote"], "다른 글의 본문입니다.")
+        self.assertIn(
+            "community:2026-02-27:t2:post:2:selected_full_body_replay:A999:delivered_t3",
+            claim["source_exposure_ids"],
+        )
+
+    def test_overlap_post_refs_carry_both_exposure_relations(self) -> None:
+        from twinmarket_kr.community.thinking import (
+            _format_best_posts,
+            _format_posts_read,
+        )
+
+        registry: dict[int, dict] = {}
+        log = self._community_log(overlap=True)
+        _format_best_posts(
+            log["best_posts_seen"],
+            selected_by_id={
+                int(post["post_id"]): post for post in log["posts_read"]
+            },
+            agent_id="A999",
+            source_turn=2,
+            source_date="2026-02-27",
+            delivery_turn=3,
+            quotable_registry=registry,
+        )
+        relations = {
+            exposure_id.split(":")[5]
+            for exposure_id in registry[2]["exposure_ids"]
+        }
+        self.assertEqual(relations, {"best_full_body", "selected_full_body_replay"})
+
+    def test_unknown_bool_or_textual_ref_fails(self) -> None:
         from twinmarket_kr.community.thinking import _community_thinking_errors
 
-        return [
-            error
-            for error in _community_thinking_errors(
-                value, allowed_sources=self.SOURCES
+        registry: dict[int, dict] = {}
+        log = self._community_log()
+        from twinmarket_kr.community.thinking import _format_best_posts
+
+        _, sources = _format_best_posts(
+            log["best_posts_seen"],
+            agent_id="A999",
+            source_turn=2,
+            source_date="2026-02-27",
+            delivery_turn=3,
+            quotable_registry=registry,
+        )
+        for bad_ref, label in ((99, "unknown"), (True, "bool"), ("2", "text")):
+            with self.subTest(ref=label):
+                errors = _community_thinking_errors(
+                    self._payload(bad_ref),
+                    allowed_sources=sources,
+                    quotable_registry=registry,
+                )
+                self.assertTrue(
+                    any("supporting_quote_ref" in e for e in errors)
+                )
+        # 자유 문자열 인용(구 스키마)은 schema 오류로 거부된다.
+        legacy = self._payload(2)
+        legacy["claims"][0].pop("supporting_quote_ref")
+        legacy["claims"][0]["supporting_quote"] = "아무 문장"
+        errors = _community_thinking_errors(
+            legacy, allowed_sources=sources, quotable_registry=registry
+        )
+        self.assertTrue(any("invalid_schema" in e for e in errors))
+
+    def test_offline_stub_satisfies_the_ref_contract(self) -> None:
+        import os
+
+        with patch.dict(os.environ, {"TWINMARKET_OFFLINE_LLM": "1"}):
+            from twinmarket_kr.llm.client import OpenRouterClient
+
+            client = OpenRouterClient()
+            result = asyncio.run(
+                __import__(
+                    "twinmarket_kr.community.thinking", fromlist=["community_thinking"]
+                ).community_thinking(
+                    {"agent_id": "A999", "persona_prompt": "페르소나"},
+                    self._community_log(),
+                    delivery_turn=3,
+                    delivery_date="2026-03-03",
+                    client=client,
+                )
             )
-            if "supporting_quote" in error
-        ]
-
-    def test_exact_quote_passes(self) -> None:
-        self.assertEqual(
-            self._quote_errors(self._claim("16조나 팔아치우는데 주가는")), []
-        )
-
-    def test_whitespace_variant_quote_passes(self) -> None:
-        # 프로브에서 관측된 실제 실패 유형: 모델이 공백만 통일해 인용
-        self.assertEqual(
-            self._quote_errors(self._claim("16 조나 팔아치우는데 주가는")), []
-        )
-        self.assertEqual(
-            self._quote_errors(
-                self._claim("엔비디아 쇼크에 외국인들이 16 조나 팔아치우는데")
-            ),
-            [],
-        )
-
-    def test_fabricated_quote_still_fails(self) -> None:
-        self.assertTrue(
-            self._quote_errors(self._claim("외국인이 곧 돌아올 것이라는 확신"))
-        )
-
-    def test_quote_from_other_delivered_post_passes(self) -> None:
-        # 인용문이 인용한 글이 아니라도 실제 배달된 글에 있으면 위조가 아니다.
-        # 라이브에서 진짜 인용문의 출처 ID만 틀려 10회 소진이 발생했다.
-        self.assertEqual(
-            self._quote_errors(self._claim("다른 글의 본문입니다.")), []
-        )
-
-    def test_spliced_quote_still_fails(self) -> None:
-        # 실제 구절로 시작해 자기 말을 이어붙인 짜깁기는 거부한다.
-        self.assertTrue(
-            self._quote_errors(
-                self._claim("16조나 팔아치우는데 결국 개인이 승리할 것입니다")
-            )
-        )
-
-    def test_whitespace_only_quote_still_fails(self) -> None:
-        self.assertTrue(self._quote_errors(self._claim("   ")))
+        for claim in result["claims"]:
+            self.assertIn("supporting_quote", claim)
+            self.assertTrue(claim["supporting_quote"])
 
 
 class ValidationLogSurvivesEventRollbackTests(unittest.TestCase):
