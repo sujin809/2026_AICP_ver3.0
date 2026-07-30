@@ -301,6 +301,7 @@ def build_review(
     news_bundle: SealedNewsBundle,
     calendar: dict,
     stage_inputs: dict,
+    news_file_sha256: str,
 ) -> dict:
     """Record only checks that the sealer actually executed.
 
@@ -308,6 +309,11 @@ def build_review(
     timestamps.  Those values did not prove a real review.  The canonical
     artifact now records the deterministic validation boundary that was
     actually run by :meth:`SealedNewsBundle.load`.
+
+    ``news_file_sha256`` is the digest of the ``news.json`` this sealer wrote
+    beside this review, not of the source candidate manifest it read.  A reader
+    of the sealed directory can therefore verify the field against the bundle
+    that is actually shipped here.
     """
 
     return {
@@ -317,7 +323,7 @@ def build_review(
             "twinmarket_kr.agents.news_agent.SealedNewsBundle.load"
         ),
         "real_news_bundle_manifest_sha256": news_bundle.bundle_sha256,
-        "real_news_bundle_file_sha256": news_bundle.file_sha256,
+        "real_news_bundle_file_sha256": news_file_sha256,
         "calendar_event_registry_sha256": canonical_sha256(calendar),
         "stage_input_registry_canonical_sha256": canonical_sha256(stage_inputs),
         "checks": [
@@ -449,7 +455,13 @@ def build_spec(
             "model": config.PAPER_OPENROUTER_MODEL,
             "provider": config.PAPER_OPENROUTER_PROVIDER,
             "reasoning": {"effort": "none", "exclude": True},
-            "per_arm_max_concurrent_llm_calls": 8, "physical_http_attempts_per_phase_attempt": 1,
+            "per_arm_max_concurrent_llm_calls": 8,
+            # 논리 호출 1건이 보낼 수 있는 물리 HTTP 시도 상한. 이전 봉인은 1로
+            # 적었지만 실제 클라이언트는 config.OPENROUTER_MAX_RETRIES 만큼
+            # 재시도한다. 선언과 구현이 갈라지지 않도록 config에서 읽는다.
+            "max_physical_http_attempts_per_logical_call": int(
+                config.OPENROUTER_MAX_RETRIES
+            ),
             "allow_provider_fallbacks": False, "require_parameters": True,
             "reasoning_off_canary_required": True,
             "reasoning_off_success_contract": "provider-model-match-reasoning-empty-tokens-zero",
@@ -583,19 +595,20 @@ def main(argv=None) -> int:
     )
     cohort = build_cohort(persona_projection, args.slots_csv)
     injection = {"artifact_type": "known_injection_registry", "version": "known-injections-v1", "entries": []}
-    review = build_review(
-        news_bundle=news_bundle,
-        calendar=calendar,
-        stage_inputs=stage_inputs,
-    )
-
     _write(out / "cohort.json", cohort)
     _write(out / "persona_projection.json", persona_projection)
     _write(out / "calendar.json", calendar)
     stage_bytes = _write(out / "stage_inputs.json", stage_inputs)
     _write(out / "prices.json", price_reg)
-    _write(out / "news.json", news)
+    news_bytes = _write(out / "news.json", news)
     _write(out / "known_injection.json", injection)
+
+    review = build_review(
+        news_bundle=news_bundle,
+        calendar=calendar,
+        stage_inputs=stage_inputs,
+        news_file_sha256=hashlib.sha256(news_bytes).hexdigest(),
+    )
     _write(out / "review.json", review)
 
     spec = build_spec(

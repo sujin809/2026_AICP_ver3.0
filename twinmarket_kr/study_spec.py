@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+import config
 from twinmarket_kr.experiment_runtime import canonical_sha256, file_sha256
 from twinmarket_kr.outcome_schedule import FrozenEventSchedule
 from twinmarket_kr.persona.select import (
@@ -60,12 +61,12 @@ _SUPPORT_PROMPTS = (
     (
         "news_pre_search",
         "news_agent_pre_search.txt",
-        "sealed_compatibility_only_depth2_registry_no_model_call",
+        "conditional_depth2_pre_search_journaled_call",
     ),
     (
         "news_post_search",
         "news_agent_post_search.txt",
-        "sealed_compatibility_only_depth2_registry_no_model_call",
+        "conditional_depth2_post_search_journaled_call",
     ),
     (
         "news_interpretation",
@@ -507,6 +508,20 @@ def _validate_policy(
     if isinstance(concurrency, bool) or not isinstance(concurrency, int) or concurrency < 1:
         raise IntegratedStudySpecError(
             "model_policy.per_arm_max_concurrent_llm_calls must be positive"
+        )
+    # The retired ``physical_http_attempts_per_phase_attempt`` field was written
+    # by the sealer but read by nobody, so it silently disagreed with the real
+    # client retry budget.  Bind the replacement to config so a future drift
+    # fails here instead of misdescribing the run.
+    _expect(
+        model.get("max_physical_http_attempts_per_logical_call"),
+        int(config.OPENROUTER_MAX_RETRIES),
+        "physical HTTP attempt budget",
+    )
+    if "physical_http_attempts_per_phase_attempt" in model:
+        raise IntegratedStudySpecError(
+            "model_policy.physical_http_attempts_per_phase_attempt is retired; "
+            "re-seal with max_physical_http_attempts_per_logical_call"
         )
     return concurrency
 

@@ -15,6 +15,7 @@ from twinmarket_kr.community.agent import CommunityAgent
 from twinmarket_kr.community.reading import (
     _format_post_list,
     _format_posts_content,
+    _validate_selection,
     community_reading_select,
 )
 from twinmarket_kr.community.thinking import _format_best_posts, _format_posts_read
@@ -181,6 +182,42 @@ class CommunityPolicyTests(unittest.TestCase):
                 for error in errors
             )
         )
+
+    def test_selective_read_cap_boundary_is_not_silently_truncated(self) -> None:
+        # AGENTS.md 검증 원칙: a D1 selection of 6 and a D2 selection of 11 must
+        # fail, while 5 passes for both depths.  The runtime boundary must reject
+        # the whole over-cap selection instead of trimming it to the cap, because
+        # a silent trim would change which posts the agent actually read.
+        available = set(range(1, 12))
+        for depth, over_cap in ((1, 6), (2, 11)):
+            limit = expected_selective_read_limit(depth)
+            self.assertEqual(limit, 5)
+
+            at_cap, errors = _validate_selection(
+                {"selected_post_ids": list(range(1, limit + 1))},
+                available=available,
+                read_limit=limit,
+            )
+            self.assertEqual(at_cap, list(range(1, limit + 1)))
+            self.assertEqual(errors, [])
+
+            selected, errors = _validate_selection(
+                {"selected_post_ids": list(range(1, over_cap + 1))},
+                available=available,
+                read_limit=limit,
+            )
+            self.assertIn(f"selected_post_ids:exceeds_limit:{over_cap}>{limit}", errors)
+            # No silent truncation: the rejected selection keeps its real size.
+            self.assertEqual(len(selected), over_cap)
+
+        # Depth 0 reads nothing selectively, so any selection is over cap.
+        self.assertEqual(expected_selective_read_limit(0), 0)
+        _, errors = _validate_selection(
+            {"selected_post_ids": [1]},
+            available=available,
+            read_limit=expected_selective_read_limit(0),
+        )
+        self.assertIn("selected_post_ids:exceeds_limit:1>0", errors)
 
     def test_post_body_boundary_is_not_silently_truncated(self) -> None:
         body = "가" * 500

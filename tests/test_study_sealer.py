@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import tempfile
@@ -127,12 +128,24 @@ class IntegratedStudySealerTests(unittest.TestCase):
             (root / "stage_inputs.json").read_text(encoding="utf-8")
         )
 
+        news_bytes = (root / "news.json").read_bytes()
         review = self.sealer.build_review(
             news_bundle=bundle,
             calendar=calendar,
             stage_inputs=stage_inputs,
+            news_file_sha256=hashlib.sha256(news_bytes).hexdigest(),
         )
 
+        # The recorded file digest must describe the sealed news.json shipped
+        # beside the review, not the source candidate manifest the sealer read.
+        self.assertEqual(
+            review["real_news_bundle_file_sha256"],
+            hashlib.sha256(news_bytes).hexdigest(),
+        )
+        self.assertEqual(
+            review["real_news_bundle_manifest_sha256"],
+            bundle.bundle_sha256,
+        )
         self.assertTrue(review["validation_pass"])
         self.assertEqual(review["article_count"], len(bundle.articles))
         self.assertEqual(

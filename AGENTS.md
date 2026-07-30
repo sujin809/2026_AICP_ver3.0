@@ -443,6 +443,19 @@ PM의 실제 fill 확정
   - file hash:
     `cf3561dbe9f9fa360b716970e8352022fa8cbcd4d824c1ef249880d1ee7e5f55`
   - 90 events, 760 slots/articles, 59 shortage events
+- 부족한 기사를 새로 채우지 않기로 확정했으므로 `outputs/*_split` 5개 폴더가
+  뉴스 소스의 최종본이다. 위 두 hash가 그 최종본에서 나온 정본이다.
+- **에이전트에게 노출되는 뉴스 텍스트는 제목과 요약뿐이다. 기사 본문은
+  노출하지 않는다.** 봉인 bundle에는 본문이 아예 없고 `raw_body_sha256`,
+  `version_sha256`, `cutoff_version_sha256` 해시만 있다. 본문을 다시
+  노출하도록 바꾸지 않는다.
+  - `news_agent._public_content_item`의 `content` 필드는 기사 본문이 아니라
+    `summary`다. 이름이 `content`라서 본문으로 오해하지 않는다.
+  - depth별 노출은 다음과 같다. D0는 제목만 보며 요약을 받지 않는다.
+    - D0: 해당 event의 제목 목록만 (`read_contents`는 항상 빈 배열,
+      `limits.daily_read_max = 0`)
+    - D1: 제목 목록 + 그 event 기사들의 요약
+    - D2: D1과 같고, 추가로 최근 7일 검색 결과 최대 5건의 요약
 - 삼성 baseline cohort는 정확히 100명, D0/D1/D2=30/55/15다.
 - persona의 기존 demographic·투자성향 표현은 유지하며, 전원 동일한
   `trad_pro`, `fol_ind`를 새 persona 문장에 노출하지 않는다.
