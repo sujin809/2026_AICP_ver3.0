@@ -392,7 +392,9 @@ def build_spec(
         "persona_assignment_policy": "frozen-db-map-prompt-projection-only",
         "persona_renderer_sha256": persona_renderer_sha256(),
         "prompt_bundle_sha256": prompt_bundle_sha,
-        "belief_limits": {"dim_1": 150, "dim_2": 100, "dim_3": 100, "dim_4": 100, "dim_5": 100, "dim_6": 100},
+        # 한도의 정본은 config 하나다. 여기에 literal을 다시 적으면 config를
+        # 바꿔도 봉인 spec이 따라오지 않는다.
+        "belief_limits": dict(config.BELIEF_LIMITS),
         "cohort_assertions": {"depth_counts": dict(depth_counts), "initial_cash_counts": dict(cash_counts)},
         "condition_treatments": {
             "RN_COMM_OFF": {"community_mode": "off", "news_treatment": "real_only"},

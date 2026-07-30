@@ -417,16 +417,13 @@ def _validate_policy(
         ["community_mode"],
         "treatment_diff_allowlist",
     )
+    # 한도의 정본은 ``config.BELIEF_LIMITS`` 하나다. 예전에는 이 검증기와
+    # ``scripts/15_seal_study.py``가 각각 같은 값을 literal로 들고 있어서,
+    # config만 바꾸면 봉인 spec은 옛 값을 유지한 채 런타임 프롬프트와
+    # ``belief_dimensions``만 새 값으로 도는 조용한 불일치가 가능했다.
     _expect(
         spec.get("belief_limits"),
-        {
-            "dim_1": 150,
-            "dim_2": 100,
-            "dim_3": 100,
-            "dim_4": 100,
-            "dim_5": 100,
-            "dim_6": 100,
-        },
+        dict(config.BELIEF_LIMITS),
         "belief_limits",
     )
     news = _mapping(spec.get("news_exposure_policy"), "news_exposure_policy")

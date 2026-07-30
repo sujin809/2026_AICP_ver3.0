@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from collections import Counter
 from pathlib import Path
+from unittest import mock
 
 import config
 from twinmarket_kr.agents.memory_agent import load_agents_from_sys100
@@ -65,6 +66,30 @@ class IntegratedStudySpecTests(unittest.TestCase):
         self.assertEqual(len(profile.schedule_date_ids), 45)
         self.assertEqual(profile.per_arm_concurrency, 8)
         self.assertEqual(len(profile.burn_in_dates), 3)
+
+    def test_sealed_belief_limits_track_config_as_the_single_source(self) -> None:
+        """한도 정본은 config 하나여야 한다.
+
+        예전에는 이 검증기와 ``scripts/15_seal_study.py``가 각각 같은 값을
+        literal로 들고 있어서, config만 바꾸면 봉인 spec은 옛 값을 유지한 채
+        런타임 프롬프트와 ``belief_dimensions``만 새 값으로 도는 조용한
+        불일치가 가능했다.
+        """
+
+        spec = json.loads(
+            (self.sealed_root / "study_spec.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(spec["belief_limits"], dict(config.BELIEF_LIMITS))
+
+        # config를 바꾸면 기존 봉인 spec은 반드시 거부돼야 한다. 검증기가
+        # literal을 들고 있으면 이 단언이 실패한다.
+        drifted = {**config.BELIEF_LIMITS, "dim_3": config.BELIEF_LIMITS["dim_3"] + 10}
+        with mock.patch.object(config, "BELIEF_LIMITS", drifted):
+            with self.assertRaisesRegex(
+                IntegratedStudySpecError,
+                "belief_limits",
+            ):
+                self._validate(self.sealed_root)
 
     def test_rejects_community_depth_drift(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
