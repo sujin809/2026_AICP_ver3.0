@@ -409,6 +409,17 @@ async def _generate_hierarchical_belief(
                     if dimension_text_validator is not None
                     else ""
                 )
+                # 가격 결과의 support/contradict는 dim_6 문장이 아니라 원래
+                # 거래 판단 기준으로 강제된다. 라이브에서 모델이 손실 결과를
+                # "내 판단이 틀렸다는 문장을 지지한다"고 읽어 support에 넣는
+                # 실수를 10회 내내 반복해 6 agent가 소진됐다.
+                + (
+                    " 가격 결과 ID의 방향은 dim_6 문장 내용과 무관하게"
+                    " 정해져 있습니다: action_aligned_markout가 양수면 support,"
+                    " 음수면 contradict에 정확히 한 번씩 넣으세요."
+                    if required_dim_6_outcome_ids
+                    else ""
+                )
             ),
         )
     raise BeliefValidationError(
