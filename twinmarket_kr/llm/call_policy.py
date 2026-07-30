@@ -298,7 +298,12 @@ def validate_reasoning_audit(
             raise CallPolicyError(f"Audit row {index} has no provider request ID")
         if str(row.get("returned_model") or "") != policy.model:
             raise CallPolicyError(f"Audit row {index} returned an unexpected model")
-        if str(row.get("provider") or "") != policy.provider:
+        # OpenRouter는 요청에 슬러그("alibaba")를 받고 응답에는 표시명("Alibaba")을
+        # 돌려준다. 정확 문자열 비교는 정상 응답을 전부 거부하며, 이 검증기는 live
+        # 실행의 시작 지점에서도 호출되므로 본실험이 첫 호출 전에 죽는다.
+        # 라우팅 자체는 request_policy의 provider.only와 allow_fallbacks=false가
+        # 이미 고정하므로, 여기서는 표기 차이만 흡수한다.
+        if str(row.get("provider") or "").casefold() != policy.provider.casefold():
             raise CallPolicyError(f"Audit row {index} returned an unexpected provider")
         if row.get("response_reasoning_present") is not False:
             raise CallPolicyError(f"Audit row {index} contains response reasoning")
