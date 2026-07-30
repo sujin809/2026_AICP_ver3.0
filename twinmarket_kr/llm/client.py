@@ -970,7 +970,9 @@ def _offline_response(messages: list[dict[str, str]]) -> str:
                 "dim_3": "거시와 반도체 업황 신호를 계속 확인해야 한다.",
                 "dim_4": "현재 투자 심리는 한 방향보다 혼조에 가깝다.",
                 "dim_5": "새 정보는 과신보다 제한적인 대응이 필요함을 시사한다.",
-                "dim_6": "현재 정보의 한계를 인정하고 판단 과신을 경계해야 한다.",
+                # STB dim_6은 과거 성과 회고가 아니라 오늘 정보의 한계와 주의점이다.
+                # validate_stb_dim_6_scope가 두 구획 표시를 모두 요구한다.
+                "dim_6": "정보 한계: 제목과 요약만 제공됨 / 주의점: 제공되지 않은 수치를 추정하지 않기",
                 "dimension_evidence": dimension_evidence,
             },
             ensure_ascii=False,
@@ -1023,10 +1025,13 @@ def _offline_response(messages: list[dict[str, str]]) -> str:
             },
             ensure_ascii=False,
         )
-    if '"schema_version": "simulation-analysis-input-v1"' in prompt:
-        payload = _extract_json_after_label(prompt, "입력 정보(JSON):")
-        market = payload.get("market") or {}
-        execution_state = payload.get("execution_state") or {}
+    # analysis/decision은 봉인 stage payload 없이 이름 있는 슬롯만 받는다.
+    # 따라서 stage 식별과 필드 추출 모두 프롬프트 본문의 슬롯 라벨을 기준으로 한다.
+    if "거래 전 시장 분석을 JSON으로 작성" in prompt:
+        market = _extract_json_after_label(prompt, "(source 이름: market):")
+        execution_state = _extract_json_after_label(
+            prompt, "(source 이름: execution_state):"
+        )
         market_field = next(iter(market), "close")
         execution_field = next(iter(execution_state), "available_cash")
         return json.dumps(
@@ -1050,9 +1055,8 @@ def _offline_response(messages: list[dict[str, str]]) -> str:
             },
             ensure_ascii=False,
         )
-    if '"schema_version": "simulation-decision-input-v1"' in prompt:
-        payload = _extract_json_after_label(prompt, "입력 정보(JSON):")
-        constraints = payload.get("execution_state") or {}
+    if "【공시가 기반 체결 규칙】" in prompt:
+        constraints = _extract_json_after_label(prompt, "거래 제약:")
         allowed = list(constraints.get("allowed_actions") or ["buy"])
         action = "buy" if "buy" in allowed else "sell"
         max_quantity = int(

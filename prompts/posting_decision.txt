@@ -51,16 +51,18 @@
 ---
 
 글을 올리지 않는 경우 아래 JSON object만 응답하세요:
-{{
+{
   "will_post": false
-}}
+}
 
 글을 올리는 경우 아래 네 key를 모두 가진 JSON object만 응답하세요:
-{{
+{
   "will_post": true,
   "post_type": "impression|question|trade_share|profit_share|analysis|column 중 하나",
   "title": "제목",
-  "content": "본문 내용"
-}}
+  "content": "본문 내용 (500자 이내)"
+}
+
+content는 500자를 넘으면 실패합니다. 잘라내기 없이 거부되므로 처음부터 500자 이내로 쓰세요.
 
 Markdown, 코드블록, 추가 key, 숨은 사고과정은 출력하지 마세요.

@@ -108,7 +108,7 @@ class LegacyCommunityPhaseTests(unittest.IsolatedAsyncioTestCase):
             ) -> list[int]:
                 self.assertTrue(all("content" not in post for post in visible_posts))
                 self.assertTrue(all("anonymous_code" in post for post in visible_posts))
-                self.assertTrue(all("author_badges" in post for post in visible_posts))
+                self.assertTrue(all("author_badges" not in post for post in visible_posts))
                 if agent["agent_id"] == "D1":
                     self.assertEqual(read_limit, 5)
                     return [d2_post_id]

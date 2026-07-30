@@ -184,7 +184,6 @@ class CommunityAgent:
         turn: int,
         n: int,
         memory_agent: MemoryAgent,
-        badges: dict[str, list[str]],
     ) -> list[dict[str, Any]]:
         """Freeze the globally ranked Best board at the PM information boundary."""
         ranked_posts = self.mark_best_posts(date, n)
@@ -208,7 +207,6 @@ class CommunityAgent:
                     "unlike_count": int(post.get("unlike_count") or 0),
                     "author_agent_id": author_agent_id,
                     "anonymous_code": str(post.get("anonymous_code") or ""),
-                    "author_badges": list(badges.get(author_agent_id, [])),
                     "author_profile_snapshot": self.get_author_profile(
                         author_agent_id,
                         memory_agent,

@@ -18,9 +18,6 @@ from twinmarket_kr.llm.response_journal import (
 from twinmarket_kr.llm.validation import LLMValidationError, record_validation_failure
 
 
-DECISION_KEYS = ("action", "quantity", "reason", "risk_control")
-
-
 def build_trading_constraints(
     *,
     available_cash: float,
@@ -212,16 +209,8 @@ async def make_decision(
         current_stb.get("dimensions", current_stb),
         label="decision.current_stb",
     )
-    stage_payload = {
-        "schema_version": "simulation-decision-input-v1",
-        "persona": {
-            "agent_id": str(agent.get("agent_id") or ""),
-        },
-        "previous_ltb": previous_dimensions,
-        "current_stb": current_dimensions,
-        "analysis": dict(market_analysis),
-        "execution_state": dict(trading_constraints),
-    }
+    # 이름 있는 슬롯 하나만으로 입력을 전달한다. 예전에는 같은 belief·analysis·
+    # constraints를 <<STAGE_PAYLOAD_JSON>>으로 한 번 더 실어 보냈다.
     prompt = render_prompt(
         "make_decision.txt",
         persona_prompt=agent["persona_prompt"],
@@ -240,9 +229,6 @@ async def make_decision(
             trading_constraints, ensure_ascii=False, indent=2
         ),
         decision_space_instruction=decision_space_instruction,
-    ).replace(
-        "<<STAGE_PAYLOAD_JSON>>",
-        json.dumps(stage_payload, ensure_ascii=False, indent=2),
     )
     if validation_attempts < 1:
         raise ValueError("validation_attempts must be at least 1")

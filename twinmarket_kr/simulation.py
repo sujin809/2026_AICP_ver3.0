@@ -25,7 +25,6 @@ from twinmarket_kr.agents.news_agent import (
     NewsAgent,
 )
 from twinmarket_kr.community.agent import CommunityAgent
-from twinmarket_kr.community.badge import calculate_badges
 from twinmarket_kr.community.posting import posting_decision
 from twinmarket_kr.community.reading import community_reading_react, community_reading_select
 from twinmarket_kr.community.validation import (
@@ -1460,7 +1459,6 @@ async def community_phase(
         depth1=config.COMMUNITY_DEPTH1_READ_LIMIT,
         depth2=config.COMMUNITY_DEPTH2_READ_LIMIT,
     )
-    badges = calculate_badges(agents, memory_agent, turn, str(sim_db_path))
     cohort_agent_ids = {str(agent["agent_id"]) for agent in agents}
 
     def _freeze_best_and_save_logs(
@@ -1472,7 +1470,6 @@ async def community_phase(
             turn=turn,
             n=config.COMMUNITY_BEST_POST_COUNT,
             memory_agent=memory_agent,
-            badges=badges,
         )
         for post in frozen_best:
             self_excluded = int(str(post["author_agent_id"]) in cohort_agent_ids)
@@ -1548,7 +1545,7 @@ async def community_phase(
             if not post_list_snapshot:
                 return agent_id, [], [], []
             visible_posts = [
-                {**post, "author_badges": badges.get(str(post["agent_id"]), [])}
+                dict(post)
                 for post in post_list_snapshot
                 if str(post["agent_id"]) != agent_id
             ]
@@ -1598,7 +1595,6 @@ async def community_phase(
                     "like_count": int(post.get("like_count") or 0),
                     "unlike_count": int(post.get("unlike_count") or 0),
                     "score": int(post.get("score") or 0),
-                    "author_badges": list(post.get("author_badges") or []),
                     "selected": int(post["post_id"]) in selected_id_set,
                     "exposure_level": "title_only",
                     "is_best": False,
@@ -1614,7 +1610,6 @@ async def community_phase(
                 if not content or str(content.get("agent_id")) == agent_id:
                     continue
                 author_agent_id = str(content.get("agent_id"))
-                content["author_badges"] = badges.get(author_agent_id, [])
                 content["author_profile"] = (
                     community_agent.get_author_profile(author_agent_id, memory_agent, turn)
                     if depth == 2
@@ -1664,7 +1659,6 @@ async def community_phase(
                         ).hexdigest(),
                         "reaction": reaction,
                         "anonymous_code": post.get("anonymous_code", ""),
-                        "author_badges": post.get("author_badges") or [],
                         "author_profile": post.get("author_profile"),
                         "profile_scope": post.get("profile_scope"),
                         "exposure_level": "full_body",

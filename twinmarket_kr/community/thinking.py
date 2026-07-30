@@ -65,16 +65,14 @@ async def community_thinking(
         **best_sources,
         **read_sources,
     }
+    # 선택 화면의 title-only 후보 노출은 exposure 분석 로그 전용이며,
+    # EXPERIMENT_DESIGN.md 8.4절에 따라 next-AM claim 입력에서 제외한다.
+    # 따라서 이 프롬프트에는 full_body 노출 두 종류만 넣는다.
     prompt = render_prompt(
         "community_thinking.txt",
         persona_prompt=agent.get("persona_prompt", ""),
-        candidate_posts_summary=(
-            "(후보 제목 노출은 exposure 분석 로그 전용이며 "
-            "claim·STB 판단 입력에서 제외)"
-        ),
         best_posts_summary=best_summary,
         posts_read_summary=read_summary,
-        depth=int(agent.get("news_depth") or 0),
     )
     current_prompt = prompt
     stage = "community_thinking"
@@ -216,7 +214,6 @@ def _format_best_posts(
             f"community:{source_date}:t{source_turn}:post:{post_id}:"
             f"best_full_body:{agent_id}:delivered_t{delivery_turn}"
         )
-        badges = ", ".join(post.get("author_badges") or []) or "없음"
         selected = selected_by_id.get(post_id)
         reaction = (
             f" | 전날 직접 읽음·내 반응: {selected.get('reaction', 'none')}"
@@ -226,12 +223,25 @@ def _format_best_posts(
         profile = _format_author_profile(post.get("author_profile"))
         title = str(post.get("title") or "")
         body = str(post.get("content") or "")
-        sources[exposure_id] = f"{title}\n{body}"
+        body_text = f"{title}\n{body}"
+        sources[exposure_id] = body_text
+        exposure_lines = [f"- source_exposure_id: {exposure_id}"]
+        if selected is not None:
+            # 같은 글이 Best와 직접 선택 두 관계에 모두 해당하면 본문은 여기서 한 번만
+            # 직렬화하되, 두 노출 관계 ID를 모두 인용 가능한 근거로 남긴다.
+            replay_exposure_id = (
+                f"community:{source_date}:t{source_turn}:post:{post_id}:"
+                f"selected_full_body_replay:{agent_id}:delivered_t{delivery_turn}"
+            )
+            sources[replay_exposure_id] = body_text
+            exposure_lines.append(
+                f"- source_exposure_id: {replay_exposure_id} (같은 글을 전날 직접 선택해 읽은 관계)"
+            )
         lines.append(
-            f"- source_exposure_id: {exposure_id}\n"
+            "\n".join(exposure_lines) + "\n"
             f"  Best {post.get('rank', '')} [{post.get('post_type', '')}] "
             f"{title} (score: {post.get('score', 0)})\n"
-            f"  작성자: {post.get('anonymous_code', '')} | 뱃지: {badges}{reaction}\n"
+            f"  작성자: {post.get('anonymous_code', '')}{reaction}\n"
             f"  본문 전체: {body}{profile}"
         )
     return "\n\n".join(lines), sources
@@ -262,7 +272,6 @@ def _format_posts_read(
             f"community:{source_date}:t{source_turn}:post:{post_id}:"
             f"selected_full_body_replay:{agent_id}:delivered_t{delivery_turn}"
         )
-        badges = ", ".join(post.get("author_badges") or []) or "없음"
         profile = _format_author_profile(post.get("author_profile"))
         title = str(post.get("title") or "")
         body = str(post.get("content") or "")
@@ -271,35 +280,8 @@ def _format_posts_read(
             f"- source_exposure_id: {exposure_id}\n"
             f"  [{post.get('post_type', '')}] {title} | "
             f"내 반응: {post.get('reaction', 'none')}\n"
-            f"  작성자: {post.get('anonymous_code', '')} | 뱃지: {badges}\n"
+            f"  작성자: {post.get('anonymous_code', '')}\n"
             f"  본문 전체: {body}{profile}"
-        )
-    return "\n\n".join(lines), sources
-
-
-def _format_candidate_posts(
-    posts: list[dict[str, Any]],
-    *,
-    agent_id: str,
-    source_turn: int,
-    source_date: str,
-) -> tuple[str, dict[str, str]]:
-    if not posts:
-        return "(어제 선택 화면에서 본 후보 글 없음)", {}
-    lines: list[str] = []
-    sources: dict[str, str] = {}
-    for post in posts:
-        post_id = int(post["post_id"])
-        exposure_id = (
-            f"community:{source_date}:t{source_turn}:post:{post_id}:"
-            f"title_only:{agent_id}"
-        )
-        title = str(post.get("title") or "")
-        sources[exposure_id] = title
-        lines.append(
-            f"- source_exposure_id: {exposure_id}\n"
-            f"  [{post.get('post_type', '')}] {title} | "
-            f"score: {post.get('score', 0)} | selected: {bool(post.get('selected'))}"
         )
     return "\n\n".join(lines), sources
 

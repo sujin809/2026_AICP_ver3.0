@@ -168,10 +168,16 @@ RN prompt의 top-level 통합은 완료되었으므로 별도 하위 production 
 ## 이번 커뮤니티 수정 범위
 
 RN 이전 레거시 커뮤니티의 게시 여부 판단, post type, 후보 선택 prompt,
-익명 닉네임·동적 뱃지, D1/D2의 서로 다른 프로필 권한, 반응 기준, 동결 배치
+익명 닉네임, D1/D2의 서로 다른 프로필 권한, 반응 기준, 동결 배치
 방식, 기존 score와 Best 타이밍을 baseline으로 보존한다. 아래에 적힌 항목과
 Best 원문/프로필 보강만 이번 통합에서 바꾼다. 명시적 사용자 결정 없이
 커뮤니티를 새 실험 처치처럼 재설계하지 않는다.
+
+레거시 동적 뱃지 3종(`상위 수익자`, `자산가`, `커뮤니티 인플루언서`)은
+**사용자 결정으로 제거했다.** 계산·저장·노출과 선택 프롬프트의 평판 참고
+문구를 모두 삭제했으므로, 뱃지를 baseline 보존 대상으로 되살리지 않는다.
+제거 근거는 `ARCHITECTURE.md` §12.9에 있다. 저자 쪽 신호는 익명 닉네임과
+D2 동결 프로필뿐이다.
 
 ### 1. Depth별 선택 상한
 
@@ -188,7 +194,7 @@ Best 원문/프로필 보강만 이번 통합에서 바꾼다. 명시적 사용�
 분석 결과에서 다음 두 상태를 직접 구분할 수 있어야 한다.
 
 - `full_body`: 해당 에이전트가 게시글 본문 전체를 실제로 읽은 경우
-- `title_only`: 레거시 후보 화면의 익명 닉네임, 뱃지, 제목, 글 유형,
+- `title_only`: 후보 화면의 익명 닉네임, 제목, 글 유형,
   반응 count/score는 봤지만 본문은 읽지 않은 경우
 
 기존 `community_interactions.csv`와
@@ -254,28 +260,31 @@ PM의 실제 fill 확정
 
 - 후보 선택은 점수 상위 자동 선택이나 랜덤 선택이 아니라, 각 에이전트의
   persona prompt를 받은 LLM이 `selected_post_ids`를 반환하는 방식이다.
-- 후보 화면은 `title_only`다. 본문을 절대 포함하지 않는다. 레거시와 같이
-  익명 닉네임, 동적 뱃지, 제목, 글 유형, 현재 반응 count/score를 제공한다.
-  D1/D2 모두 이 화면에서 글을 고르되, 포트폴리오·최근 거래는 후보 화면에
-  넣지 않는다.
+- 후보 화면은 `title_only`다. 본문을 절대 포함하지 않는다.
+  익명 닉네임, 제목, 글 유형, 현재 반응 count/score를 제공한다.
+  D1/D2 모두 이 화면에서 글을 고르되, 포트폴리오·최근 거래·작성자 평판
+  신호는 후보 화면에 넣지 않는다.
 - 후보 선택 때의 score는 해당 동결 보드의 score snapshot이다. 새 당일 게시판은
   반응 전이므로 대체로 0이며, 이 화면을 실시간 인기 순위처럼 만들지 않는다.
 - 선택 결과가 비어 있어도 허용한다. D1과 D2에게 5개를 억지로 읽히지
   않는다.
-- D1이 선택한 `full_body`에는 원문 전체와 작성자 익명 닉네임·뱃지가 포함된다.
-- D2가 선택한 `full_body`에는 원문 전체, 익명 닉네임·뱃지와 함께 작성자의
+- D1이 선택한 `full_body`에는 원문 전체와 작성자 익명 닉네임이 포함된다.
+- D2가 선택한 `full_body`에는 원문 전체, 익명 닉네임과 함께 작성자의
   포트폴리오 요약 및 PM 시점 이전 최근 3건 거래가 포함된다.
 - `full_body`는 선택된 글 또는 Best로 전달된 글의 전체 본문을 실제로 읽은
   경우에만 기록한다. 제목만 본 글을 full-body로 승격하지 않는다.
 
 ### Best의 다음 AM 전달
 
-- D0와 D1은 Best 원문 전체, 작성자 익명 닉네임·동적 뱃지를 받는다.
-- D2는 Best 원문 전체, 익명 닉네임·동적 뱃지, 작성자의 동결된 포트폴리오
+- D0와 D1은 Best 원문 전체, 작성자 익명 닉네임을 받는다.
+- D2는 Best 원문 전체, 익명 닉네임, 작성자의 동결된 포트폴리오
   요약 및 최근 3건 거래를 받는다.
 - D1/D2는 전날 직접 선택해 읽은 원문과 Best 원문을 받을 수 있다.
 - 같은 글이 직접 선택과 Best에 모두 해당하면 본문은 한 번만 전달하고,
-  `selected_full_body`와 `best_full_body`라는 두 노출 관계만 남긴다.
+  `selected_full_body_replay`와 `best_full_body` 두 노출 관계를 남긴다.
+  두 관계는 원장 라벨로만 남기지 않고 claim이 인용할 수 있는 근거 ID로
+  모두 등록한다. 본문을 한 번만 직렬화한다는 이유로 인용 가능한 관계를
+  하나로 줄이지 않는다.
 - Best 작성자는 자기 글을 받지 않는다. 전역 Top 5에 들어간 자기 글을 6위 글로
   대체하지 않는다.
 - 제목만 본 미선택 후보는 분석용 `title_only` 로그로만 남기며 다음 AM 해석,
@@ -461,6 +470,66 @@ PM의 실제 fill 확정
   `trad_pro`, `fol_ind`를 새 persona 문장에 노출하지 않는다.
 - 수수료는 0, hold는 사용하지 않으며 첫 3거래일은 분석 burn-in이다.
 - H1/H5는 둘 다 사용하며 미래 결과는 도래 event 이후에만 LTB에 들어간다.
+
+#### 봉인만 하고 절대 호출하지 않는 prompt 2종
+
+`prompts/initial_belief.txt`와 `prompts/news_interpretation.txt`는
+`prompt_bundle_sha256` 재현을 위해 봉인 묶음에 남겨두는 파일이며, **어떤
+production 경로에서도 LLM 호출로 연결하지 않는다.** 근거는
+`twinmarket_kr/study_spec.py`의 `_SUPPORT_PROMPTS`에 문자열로 박혀 있다.
+
+| 파일 | 봉인 사유 문자열 | 실제 담당 |
+| --- | --- | --- |
+| `initial_belief.txt` | `sealed_compatibility_only_deterministic_ltb0_no_model_call` | `experiment_runtime.deterministic_initial_belief()` |
+| `news_interpretation.txt` | `sealed_compatibility_only_current_stb_owns_interpretation` | `update_short_term_belief.txt` 단계 |
+
+- `twinmarket_kr/llm/analysis.py`의 `interpret_news()`는 호출부가 없는 것이
+  정상이다. "죽은 코드"로 보고 호출을 새로 만들거나 삭제하지 않는다.
+- 두 파일을 실제 호출로 연결하면 설계 계약 위반이다. 특히
+  `initial_belief.txt`는 `belief_summary`와 `view_change`를 LLM 출력으로
+  요구하는데, `EXPERIMENT_DESIGN.md` 7.3절은 이 둘이 저장된 6차원에서
+  결정론적으로 렌더링되는 사람용 projection이며 모델 출력이 아니라고 고정한다.
+- 두 파일의 내용을 고쳐도 실험 동작은 바뀌지 않고 `prompt_bundle_sha256`만
+  바뀐다. 수정했다면 재봉인이 필요하다는 뜻일 뿐, 동작 변경으로 보고하지 않는다.
+- `belief_summary` renderer는 `twinmarket_kr/belief_projection.py` 한 곳뿐이다.
+  무호출 LTB₀(`deterministic_initial_belief`)과 post-fill LTB
+  (`llm/belief.render_ltb_human_log`)가 같은 함수를 쓴다. 어느 한쪽에 별도
+  문장을 새로 쓰지 않는다. 회귀 테스트는
+  `tests/test_clean_experiment_base.py::…::test_initial_belief_summary_is_the_six_dimension_projection`이다.
+  LTB₀의 `view_change`는 parent가 없으므로 before/after dict가 아니라
+  `"initial"` 문자열을 유지한다.
+- 이 renderer를 바꾸면 base DB의 turn-zero 행이 바뀌므로
+  `scripts/04_build_experiment_base.py --force` 재실행이 필요하다. 다만
+  `belief_summary`는 LTB scientific digest에서 제외돼 있어 `human_log_sha256`만
+  달라지고 StudySpec 재봉인 대상은 아니다.
+
+#### community select/react 출력 예시는 비어 있지 않게 유지한다
+
+`twinmarket_kr/community/reading.py`의 `SELECT_OUTPUT_CONTRACT`와
+`REACT_OUTPUT_CONTRACT`가 프롬프트 끝에 주입하는 JSON 예시는 **항상 실제 값이
+들어 있는 형태**여야 한다. 빈 배열을 유일한 예시로 보여주지 않는다.
+
+- 0720 원본 `prompts/community_reading.txt`는 `[post_id, ...]`와
+  `[{"post_id": int, "reaction": ...}, ...]`처럼 비어 있지 않은 예시였다.
+  v2 `prompts/common/` 단계에서 양쪽 다 `[]`로 바뀌었고, 그 변경은
+  `PROMPT_LINEAGE.md`에 기록되지 않은 드리프트였다. 2026-07-30에 원래 방향으로
+  되돌렸다.
+- `reactions: []`는 편향 이전에 **항상 오답**이다. `_validate_reactions`가
+  `set(candidate_ids) != available`을 `reactions:must_cover_every_read_post`로
+  거부하고, react 단계는 본문이 있을 때만 호출된다.
+- `selected_post_ids: []`는 `EXPERIMENT_DESIGN.md` 8.2절상 유효한 결과다.
+  따라서 "빈 배열도 유효"라는 문장은 산문으로 유지하되, 예시는 비우지 않는다.
+  선택을 강제하는 문구도 넣지 않는다.
+- 선택이 0으로 쏠리면 반응이 0이 되고, Best 정렬이
+  `ORDER BY score DESC, like_count DESC, post_id ASC`에서 사실상 `post_id` 순으로
+  붕괴한다. ON arm이 오류 없이 조용히 약해지므로 로그로는 잡히지 않는다.
+- 실제 모델의 선택률은 offline stub으로 측정할 수 없다. stub은
+  `post_ids[:limit]`을 결정론적으로 반환한다. 이 항목은 live canary에서 실제
+  `selected_post_ids` 분포로 확인한다.
+- 회귀 테스트는
+  `tests/test_community_policy.py::CommunityReadingOutputContractTests`다.
+  프롬프트 파일이 모드별 스키마를 직접 갖지 않는지, 두 계약의 예시가 비어 있지
+  않은지, 렌더된 프롬프트에 다른 모드의 키나 미치환 슬롯이 남지 않는지를 본다.
 
 ### 다음 세션의 P0 작업 순서
 

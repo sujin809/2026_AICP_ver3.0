@@ -65,6 +65,9 @@ LTB를 갱신하지 않는다.
 - 전역 Best: 최대 5개
 - 뉴스 D2 추가 검색: 최근 7일의 cutoff-safe 후보 중 최대 5건
 - 게시글 본문: 최대 500자, 501자는 거부하고 자동 절단하지 않음
+- 게시 횟수: agent-PM당 최대 1개, `community_posts` unique index로 DB 강제
+- 작성자 평판 badge: 없음. legacy 동적 badge 3종은 제거했고 저자 쪽 노출은
+  익명 닉네임과 D2 동결 profile뿐 (근거: `ARCHITECTURE.md` §12.9)
 - Best 전달: 작성자 자기 글 제외, 6위 글로 backfill하지 않음
 - 거래 outcome: `next_turn`, `H1`, `H5`; due 이후 post-fill LTB에서만 반영
 

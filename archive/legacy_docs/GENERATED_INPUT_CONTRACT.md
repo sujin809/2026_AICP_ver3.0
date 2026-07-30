@@ -1,3 +1,19 @@
+> **ARCHIVED — 이 문서는 현행 정책이 아니다.**
+>
+> 2026-07-30에 `preparation/`에서 `archive/legacy_docs/`로 격리했다. 근거:
+>
+> - 여기서 규정하는 `prepare_preflight_bundle()`,
+>   `public_author_profile_registry.json`, `community_post_truth_policy.json`은
+>   제거된 RN 전용 runtime(`twinmarket_kr.rn_ab`)의 산출물이며 활성 Python
+>   코드 참조가 0이다.
+> - 아래 "Public author profile" 절은 균일 상수 `public_badges`와
+>   `public_reliability_score`를 규정하고 portfolio·최근 거래 노출을
+>   금지하지만, 현행 baseline은 badge를 아예 두지 않고(§12.9) D2에게는
+>   후보 보드 시점에 동결한 portfolio 요약·최근 체결 3건을 제공한다.
+>
+> 현행 community 노출 정책의 정본은 `ARCHITECTURE.md` §12와
+> `EXPERIMENT_DESIGN.md` §8이다. 이 파일은 과거 설계 provenance로만 읽는다.
+
 # RN generated preflight input contract
 
 Contract version: `rn-generated-preflight-inputs-v1`

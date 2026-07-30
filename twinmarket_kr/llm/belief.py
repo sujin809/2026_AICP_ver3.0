@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 import config
+from twinmarket_kr.belief_projection import (
+    BELIEF_DIMENSION_KEYS,
+    render_belief_summary,
+)
 from twinmarket_kr.llm.call_policy import (
     INTEGRATED_STAGE_MAX_TOKENS_V1,
     INTEGRATED_STAGE_SCHEMA_VERSIONS_V1,
@@ -26,12 +30,29 @@ from twinmarket_kr.llm.validation import (
 )
 
 
-BELIEF_DIMENSION_KEYS = ("dim_1", "dim_2", "dim_3", "dim_4", "dim_5", "dim_6")
 BELIEF_EVIDENCE_RELATIONS = ("support", "contradict")
+
+# STB는 이전 belief·과거 판단·체결·수익률·가격 성과를 입력받지 않는다. 따라서
+# STB dim_6은 누적 자기평가가 아니라 "오늘 정보의 한계와 오늘 판단의 주의점"만
+# 담아야 한다. 금칙어 목록은 의미를 검증하지 못하고 정상 문장을 과도하게
+# 막으므로, 두 구획 표시가 모두 있는지만 구조적으로 확인한다. 표시 뒤의
+# 자연어는 제한하지 않는다. 누적 자기평가는 실제 fill과 도래한 outcome을
+# 입력받는 LTB dim_6의 역할이므로 LTB에는 이 검사를 적용하지 않는다.
+STB_DIM_6_REQUIRED_MARKERS = ("정보 한계:", "주의점:")
 
 
 class BeliefValidationError(LLMValidationError):
     pass
+
+
+def validate_stb_dim_6_scope(dimensions: Mapping[str, str]) -> list[str]:
+    """Require the STB dim_6 information-limit form instead of past-performance recall."""
+
+    text = str(dimensions.get("dim_6") or "")
+    missing = [marker for marker in STB_DIM_6_REQUIRED_MARKERS if marker not in text]
+    if missing:
+        return [f"dim_6:requires_markers:{missing}"]
+    return []
 
 
 def load_prompt(name: str) -> str:
@@ -155,6 +176,7 @@ async def _generate_hierarchical_belief(
         Mapping[str, set[str]],
     ]
     | None = None,
+    dimension_text_validator: Callable[[Mapping[str, str]], list[str]] | None = None,
 ) -> dict[str, Any]:
     if validation_attempts < 1:
         raise ValueError("validation_attempts must be at least 1")
@@ -183,10 +205,15 @@ async def _generate_hierarchical_belief(
         seed_schedule=seeds,
         max_tokens=max_tokens,
         validation_attempts=validation_attempts,
-        validation_procedure_version=f"{audit_label}-validator-v2",
+        validation_procedure_version=f"{audit_label}-validator-v3",
         response_format={"type": "json_object"},
         semantic_inputs={
             "evidence_field": evidence_field,
+            "dimension_text_validator": (
+                getattr(dimension_text_validator, "__name__", "custom")
+                if dimension_text_validator is not None
+                else None
+            ),
             "allowed_ids_by_dimension": {
                 key: sorted(value)
                 for key, value in allowed_ids_by_dimension.items()
@@ -221,6 +248,8 @@ async def _generate_hierarchical_belief(
         except BeliefValidationError as exc:
             dimensions = {}
             errors.append(str(exc))
+        if dimensions and dimension_text_validator is not None:
+            errors.extend(dimension_text_validator(dimensions))
         evidence, evidence_errors = _normalize_dimension_evidence(
             raw.get(evidence_field),
             field=evidence_field,
@@ -355,6 +384,12 @@ async def _generate_hierarchical_belief(
             schema_hint=(
                 "dim_1부터 dim_6까지의 비어 있지 않은 문자열과 "
                 f"{evidence_field}만 가진 JSON object를 출력하세요."
+                + (
+                    " dim_6은 `정보 한계: ... / 주의점: ...` 형식으로 두 표시를"
+                    " 모두 포함해야 하며 과거 성과 회고를 쓰지 마세요."
+                    if dimension_text_validator is not None
+                    else ""
+                )
             ),
         )
     raise BeliefValidationError(
@@ -399,6 +434,7 @@ async def generate_short_term_belief(
         client=client,
         seed=seed,
         validation_attempts=validation_attempts,
+        dimension_text_validator=validate_stb_dim_6_scope,
     )
 
 
@@ -409,10 +445,7 @@ def render_ltb_human_log(
 ) -> tuple[str, dict[str, dict[str, str]]]:
     """Derive non-causal human log fields from committed six-dimensional state."""
 
-    summary = "\n".join(
-        f"{dimension}: {current_dimensions[dimension]}"
-        for dimension in BELIEF_DIMENSION_KEYS
-    )
+    summary = render_belief_summary(current_dimensions)
     view_change = {
         dimension: {
             "before": previous_dimensions[dimension],

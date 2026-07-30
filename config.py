@@ -126,10 +126,6 @@ COMMUNITY_DEPTH1_READ_LIMIT: int = 5
 COMMUNITY_DEPTH2_READ_LIMIT: int = 5
 COMMUNITY_BEST_POST_COUNT: int = 5
 
-BADGE_TOP_RETURN_PERCENTILE: int = 20
-BADGE_TOP_ASSET_PERCENTILE: int = 20
-BADGE_INFLUENCER_PERCENTILE: int = 20
-
 # If no separate community model is configured, keep every LLM call on the
 # primary model rather than silently falling back to a billable OpenAI model.
 OPENROUTER_COMMUNITY_MODEL: str = os.getenv("OPENROUTER_COMMUNITY_MODEL", OPENROUTER_MODEL)

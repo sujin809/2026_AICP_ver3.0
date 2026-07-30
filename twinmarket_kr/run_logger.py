@@ -209,7 +209,6 @@ class SimulationLogger:
             "content",
             "body_sha256",
             "reaction",
-            "author_badges",
             "author_profile",
             "profile_scope",
             "source_date",
@@ -246,7 +245,6 @@ class SimulationLogger:
             "unlike_count",
             "content",
             "body_sha256",
-            "author_badges",
             "author_profile_snapshot",
             "snapshot_turn",
             "snapshot_date",
@@ -609,7 +607,6 @@ class SimulationLogger:
                     "content": post.get("content"),
                     "body_sha256": post.get("body_sha256"),
                     "reaction": post.get("reaction"),
-                    "author_badges": json.dumps(post.get("author_badges") or [], ensure_ascii=False),
                     "author_profile": json.dumps(post.get("author_profile"), ensure_ascii=False, default=str),
                     "profile_scope": post.get("profile_scope"),
                     "source_date": date,
@@ -646,7 +643,6 @@ class SimulationLogger:
                 "like_count": post.get("like_count"),
                 "unlike_count": post.get("unlike_count"),
                 "score": post.get("score"),
-                "author_badges": post.get("author_badges") or [],
             }
             for post in visible_posts
         ]
@@ -694,7 +690,6 @@ class SimulationLogger:
                     "title": post.get("title"),
                     "post_type": post.get("post_type"),
                     "reaction": "",
-                    "author_badges": json.dumps(post.get("author_badges") or [], ensure_ascii=False),
                     "profile_scope": "candidate_minimal",
                     "source_date": date,
                     "delivery_date": date,
@@ -739,7 +734,6 @@ class SimulationLogger:
                     "unlike_count": post.get("unlike_count"),
                     "content": post.get("content"),
                     "body_sha256": post.get("body_sha256"),
-                    "author_badges": json.dumps(post.get("author_badges") or [], ensure_ascii=False),
                     "author_profile_snapshot": json.dumps(
                         post.get("author_profile_snapshot"),
                         ensure_ascii=False,
@@ -808,10 +802,6 @@ class SimulationLogger:
                     "content": post.get("content"),
                     "body_sha256": post.get("body_sha256"),
                     "reaction": post.get("reaction") if replay else "",
-                    "author_badges": json.dumps(
-                        post.get("author_badges") or [],
-                        ensure_ascii=False,
-                    ),
                     "author_profile": json.dumps(
                         post.get("author_profile"),
                         ensure_ascii=False,

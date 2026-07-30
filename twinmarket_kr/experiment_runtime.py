@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
+from twinmarket_kr.belief_projection import render_belief_summary
 from twinmarket_kr.db.connection import connect, init_sim_db
 
 import config
@@ -1482,7 +1483,7 @@ def deterministic_initial_belief(
         dim_2 = (
             "장기 가치는 보지만 현재 가격의 저평가 여부를 확인해야 한다."
         )
-    return {
+    dimensions = {
         "dim_1": (
             f"초기에는 {instrument}의 한 달 방향을 중립으로 보며 "
             "확인된 신호를 기다린다."
@@ -1497,11 +1498,14 @@ def deterministic_initial_belief(
         "dim_6": (
             "초기 판단에는 불확실성이 있어 현금 관리와 원칙 준수를 중시한다."
         ),
-        "belief_summary": (
-            f"초기에는 {instrument}에 대해 중립적 관점을 유지한다. "
-            "페르소나상 투자 전략에 맞춰 시장 데이터와 뉴스를 확인한 뒤 "
-            "방향성을 조정할 것이다."
-        ),
+    }
+    return {
+        **dimensions,
+        # EXPERIMENT_DESIGN.md 7.3절: belief_summary는 저장된 여섯 차원에서
+        # 결정론적으로 렌더링하는 사람용 projection이다. post-fill LTB와 같은
+        # renderer를 써서 LTB₀만 다른 규칙으로 채워지지 않게 한다.
+        "belief_summary": render_belief_summary(dimensions),
+        # LTB₀은 parent LTB가 없어 before/after 렌더링 대상이 아니다.
         "view_change": "initial",
     }
 

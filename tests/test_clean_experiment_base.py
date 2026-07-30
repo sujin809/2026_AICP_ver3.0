@@ -8,6 +8,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 import config
+from twinmarket_kr.belief_projection import (
+    BELIEF_DIMENSION_KEYS,
+    render_belief_summary,
+)
 from twinmarket_kr.db.connection import init_sim_db
 from twinmarket_kr.experiment_runtime import (
     RUNTIME_TABLES,
@@ -15,6 +19,7 @@ from twinmarket_kr.experiment_runtime import (
     deterministic_initial_belief,
     validate_clean_experiment_base,
 )
+from twinmarket_kr.llm.belief import render_ltb_human_log
 
 
 AGENT_ID = "A001"
@@ -425,6 +430,39 @@ class CleanExperimentBaseTest(unittest.TestCase):
                     ("A002", "t000", 1_000_000_000.0, "[]", 1_000_000_000.0),
                 ],
             )
+
+    def test_initial_belief_summary_is_the_six_dimension_projection(self) -> None:
+        """LTB₀의 사람용 summary는 자신의 6차원에서 결정론적으로 렌더링된다.
+
+        EXPERIMENT_DESIGN.md 7.3절이 `belief_summary`를 저장된 여섯 차원의
+        결정론적 projection으로 고정한다. 무호출 LTB₀ 경로가 별도 문장을 쓰면
+        같은 필드가 post-fill LTB와 다른 규칙으로 채워진다.
+        """
+
+        for strategy in ("value", "technical"):
+            with self.subTest(strategy=strategy):
+                belief = deterministic_initial_belief(
+                    {
+                        "agent_id": AGENT_ID,
+                        "ini_cash": INITIAL_CASH,
+                        "strategy": strategy,
+                    }
+                )
+                dimensions = {
+                    key: belief[key] for key in BELIEF_DIMENSION_KEYS
+                }
+                self.assertEqual(
+                    belief["belief_summary"],
+                    render_belief_summary(dimensions),
+                )
+                # post-fill LTB 경로와 같은 renderer여야 한다.
+                summary, _ = render_ltb_human_log(
+                    previous_dimensions=dimensions,
+                    current_dimensions=dimensions,
+                )
+                self.assertEqual(belief["belief_summary"], summary)
+                # LTB₀은 parent가 없어 before/after 렌더링 대상이 아니다.
+                self.assertEqual(belief["view_change"], "initial")
 
     def test_builder_removes_integrated_runtime_and_retains_static_turn_zero(
         self,

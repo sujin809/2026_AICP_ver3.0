@@ -24,11 +24,11 @@ post_search
 - unresolved_questions: 아직 불명확한 쟁점의 문자열 배열 list[string]. 없으면 빈 배열 [].
 
 올바른 형식 예시:
-{{
+{
   "new_findings": ["검색으로 추가 확인한 내용"],
   "view_change": "유지",
   "view_change_detail": "추가 정보가 기존 판단을 바꿀 정도는 아니어서 관점을 유지한다.",
   "unresolved_questions": []
-}}
+}
 
 거래 행동 지시는 쓰지 말고 뉴스 탐색과 해석만 작성하세요.

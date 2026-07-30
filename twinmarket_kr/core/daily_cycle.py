@@ -257,13 +257,14 @@ async def run_agent_turn(
             str(row.get("id")) for row in search_results if row.get("id")
         ]
         today_context["news_context"]["depth2_flow"] = depth2_flow
+    # 미선택 title-only 후보는 분석 로그 전용이므로 claim 단계를 유발하지 않는다.
+    # full-body 노출(전일 Best 또는 직접 선택해 읽은 글)이 있을 때만 해석을 만든다.
     should_do_community_thinking = (
         community_agent is not None
         and community_log is not None
         and bool(
             community_log.get("best_posts_seen")
             or community_log.get("posts_read")
-            or community_log.get("candidate_posts_seen")
         )
     )
     if should_do_community_thinking:

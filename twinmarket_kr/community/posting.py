@@ -103,7 +103,7 @@ async def posting_decision(
         seed_schedule=seeds,
         max_tokens=max_tokens,
         validation_attempts=validation_attempts,
-        validation_procedure_version="community-posting-validator-v1",
+        validation_procedure_version="community-posting-validator-v2",
         response_format={"type": "json_object"},
     )
     if journal_call is not None and journal_call.replay is not None:
@@ -180,9 +180,10 @@ async def posting_decision(
                 prompt,
                 errors=errors,
                 schema_hint=(
-                    '{"will_post": boolean, "post_type": "impression|question|trade_share|'
-                    'profit_share|analysis|column", "title": string, "content": string}. '
-                    "will_post가 false이면 나머지 문자열은 비어 있어도 됩니다."
+                    '게시하면 {"will_post": true, "post_type": "impression|question|'
+                    'trade_share|profit_share|analysis|column", "title": string, '
+                    '"content": string} 네 key만, 게시하지 않으면 '
+                    '{"will_post": false} 한 key만 출력하세요. 추가 key는 실패입니다.'
                 ),
             )
         else:
@@ -213,9 +214,15 @@ async def posting_decision(
 def _posting_errors(raw: dict[str, Any]) -> list[str]:
     if not isinstance(raw.get("will_post"), bool):
         return ["will_post:requires_boolean"]
+    # posting_decision.txt는 게시하지 않으면 {"will_post": false}만, 게시하면
+    # 네 key만 출력하라고 요구한다. 다른 단계와 같은 강도로 extra key를 막는다.
     if raw["will_post"] is False:
-        return []
+        unknown = sorted(set(raw) - {"will_post"})
+        return [f"top_level_keys:unknown={unknown}"] if unknown else []
     errors: list[str] = []
+    unknown = sorted(set(raw) - {"will_post", "post_type", "title", "content"})
+    if unknown:
+        errors.append(f"top_level_keys:unknown={unknown}")
     if str(raw.get("post_type") or "").strip() not in POST_TYPES:
         errors.append("post_type:invalid")
     if not str(raw.get("title") or "").strip():

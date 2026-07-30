@@ -135,6 +135,7 @@ async def _required_json_response(
     validator: Callable[[dict[str, Any]], list[str]] | None = None,
     normalizer: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     schema_hint: str = "요청된 모든 JSON 키와 자료형을 정확히 지키세요.",
+    validation_procedure_version: str | None = None,
 ) -> dict[str, Any]:
     if validation_attempts < 1:
         raise ValueError("validation_attempts must be at least 1")
@@ -158,7 +159,9 @@ async def _required_json_response(
         seed_schedule=seeds,
         max_tokens=max_tokens,
         validation_attempts=validation_attempts,
-        validation_procedure_version=f"{label}-validator-v1",
+        validation_procedure_version=(
+            validation_procedure_version or f"{label}-validator-v1"
+        ),
         response_format={"type": "json_object"},
         semantic_inputs={
             "required_keys": list(required_keys),
@@ -432,16 +435,11 @@ async def analyze_market(
         current_stb.get("dimensions", current_stb),
         label="analysis.current_stb",
     )
-    stage_payload = {
-        "schema_version": "simulation-analysis-input-v1",
-        "persona": {
-            "agent_id": str(agent["agent_id"]),
-        },
-        "previous_ltb": previous_dimensions,
-        "current_stb": current_dimensions,
-        "market": dict(market_features),
-        "execution_state": dict(execution_state),
-    }
+    # 이름 있는 슬롯 하나만으로 입력을 전달한다. 예전에는 같은 내용을
+    # <<STAGE_PAYLOAD_JSON>>으로 한 번 더 실어 보내 프롬프트의 약 1/3이
+    # 동일 입력의 사본이었다. evidence_references가 참조해야 하는 source
+    # 이름(previous_ltb/current_stb/market/execution_state)은 이제 payload
+    # key가 아니라 프롬프트 본문이 명시한다.
     prompt = render_prompt(
         "market_analysis.txt",
         persona_prompt=agent["persona_prompt"],
@@ -454,13 +452,8 @@ async def analyze_market(
             indent=2,
         ),
         market_features=json.dumps(market_features, ensure_ascii=False, indent=2),
+        execution_state=json.dumps(execution_state, ensure_ascii=False, indent=2),
         portfolio_summary=portfolio_summary,
-        news_interpretation=json.dumps(
-            {"source": "current_stb.dim_5"}, ensure_ascii=False, indent=2
-        ),
-    ).replace(
-        "<<STAGE_PAYLOAD_JSON>>",
-        json.dumps(stage_payload, ensure_ascii=False, indent=2),
     )
     allowed_reference_fields = {
         "previous_ltb": set(BELIEF_DIMENSION_KEYS),
@@ -470,7 +463,16 @@ async def analyze_market(
     }
 
     def validate_analysis(value: dict[str, Any]) -> list[str]:
+        # 프롬프트가 "위 필수 key만 가진 JSON object"를 요구하므로 STB/LTB·decision
+        # 단계와 같은 강도로 extra key를 거부한다. 검증을 통과한 뒤에야 호출부가
+        # generation_attempts를 덧붙이므로 이 시점의 value에는 추가되지 않는다.
+        unknown_keys = sorted(set(value) - set(MARKET_ANALYSIS_KEYS))
         errors = [
+            *(
+                [f"top_level_keys:unknown={unknown_keys}"]
+                if unknown_keys
+                else []
+            ),
             *(
                 []
                 if value.get("confidence") in {"high", "medium", "low"}
@@ -534,4 +536,5 @@ async def analyze_market(
         label="market_analysis",
         seed=seed,
         validator=validate_analysis,
+        validation_procedure_version="market_analysis-validator-v2",
     )

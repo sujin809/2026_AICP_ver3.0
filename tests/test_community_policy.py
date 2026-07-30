@@ -13,12 +13,15 @@ from unittest.mock import patch
 from twinmarket_kr.agents.memory_agent import MemoryAgent
 from twinmarket_kr.community.agent import CommunityAgent
 from twinmarket_kr.community.reading import (
+    REACT_OUTPUT_CONTRACT,
+    SELECT_OUTPUT_CONTRACT,
     _format_post_list,
     _format_posts_content,
     _validate_selection,
     community_reading_select,
 )
 from twinmarket_kr.community.thinking import _format_best_posts, _format_posts_read
+from twinmarket_kr.llm.belief import load_prompt, render_prompt
 from twinmarket_kr.community.validation import (
     CommunityValidationError,
     expected_selective_read_limit,
@@ -369,7 +372,6 @@ class CommunityBestPolicyTests(unittest.TestCase):
             turn=3,
             n=5,
             memory_agent=self.memory,
-            badges={"A001": ["상위 수익자"]},
         )
         self.assertEqual([post["post_id"] for post in frozen], post_ids[:5])
         self.assertEqual(frozen[0]["content"], "body-1")
@@ -444,7 +446,6 @@ class CommunityBestPolicyTests(unittest.TestCase):
             turn=3,
             n=5,
             memory_agent=self.memory,
-            badges={"A001": ["자산가"]},
         )
         profile = frozen[0]["author_profile_snapshot"]
         self.assertEqual(
@@ -494,7 +495,6 @@ class CommunityBestPolicyTests(unittest.TestCase):
             "content": long_body,
             "reaction": "like",
             "anonymous_code": "황소-1001",
-            "author_badges": ["자산가"],
         }
         best_text, _best_sources = _format_best_posts(
             [{**selected, "rank": 1, "score": 2}],
@@ -531,7 +531,6 @@ class CommunityBestPolicyTests(unittest.TestCase):
             "title": "title only",
             "content": "본문 전체",
             "anonymous_code": "곰-1001",
-            "author_badges": ["자산가"],
             "like_count": 2,
             "unlike_count": 1,
             "score": 1,
@@ -545,8 +544,112 @@ class CommunityBestPolicyTests(unittest.TestCase):
         full_text = _format_posts_content([post])
         self.assertIn("본문 전체", full_text)
         self.assertIn("곰-1001", full_text)
-        self.assertIn("자산가", full_text)
         self.assertIn(profile["note"], full_text)
+
+    def test_no_author_reputation_signal_reaches_any_community_prompt(self) -> None:
+        """뱃지·평판 신호는 어느 커뮤니티 단계 프롬프트에도 남지 않는다."""
+        post = {
+            "post_id": 1,
+            "post_type": "analysis",
+            "title": "reputation free",
+            "content": "본문",
+            "anonymous_code": "여우-3021",
+            "like_count": 0,
+            "unlike_count": 0,
+            "score": 0,
+            "reaction": "none",
+            # 과거 원장/로그에서 흘러들어온 뱃지 키가 있어도 렌더링되지 않아야 한다.
+            "author_badges": ["상위 수익자", "자산가", "커뮤니티 인플루언서"],
+        }
+        best_text, _ = _format_best_posts(
+            [{**post, "rank": 1, "score": 0}],
+            selected_by_id={},
+            agent_id="A999",
+            source_turn=2,
+            source_date="2026-02-27",
+            delivery_turn=3,
+        )
+        read_text, _ = _format_posts_read(
+            [post],
+            excluded_post_ids=set(),
+            agent_id="A999",
+            source_turn=2,
+            source_date="2026-02-27",
+            delivery_turn=3,
+        )
+        rendered = [
+            _format_post_list([post]),
+            _format_posts_content([post]),
+            best_text,
+            read_text,
+        ]
+        for text in rendered:
+            for label in ("뱃지", "배지", "상위 수익자", "자산가", "커뮤니티 인플루언서"):
+                self.assertNotIn(label, text)
+        selection_prompt = load_prompt("community_reading.txt")
+        for label in ("배지", "뱃지", "평판"):
+            self.assertNotIn(label, selection_prompt)
+
+    def test_best_and_selected_overlap_keeps_both_exposure_relations(self) -> None:
+        """본문은 한 번만 직렬화하되 두 노출 관계 ID를 모두 인용할 수 있어야 한다."""
+        body = "겹치는 본문"
+        selected = {
+            "post_id": 11,
+            "post_type": "analysis",
+            "title": "overlap",
+            "content": body,
+            "reaction": "like",
+            "anonymous_code": "황소-1001",
+        }
+        best_text, best_sources = _format_best_posts(
+            [{**selected, "rank": 1, "score": 3}],
+            selected_by_id={11: selected},
+            agent_id="A999",
+            source_turn=2,
+            source_date="2026-02-27",
+            delivery_turn=3,
+        )
+        best_id = (
+            "community:2026-02-27:t2:post:11:best_full_body:A999:delivered_t3"
+        )
+        replay_id = (
+            "community:2026-02-27:t2:post:11:"
+            "selected_full_body_replay:A999:delivered_t3"
+        )
+        self.assertEqual(set(best_sources), {best_id, replay_id})
+        self.assertEqual(best_sources[best_id], best_sources[replay_id])
+        # 두 관계가 같은 본문을 가리키더라도 본문은 한 번만 직렬화된다.
+        self.assertEqual(best_text.count(body), 1)
+        self.assertIn(best_id, best_text)
+        self.assertIn(replay_id, best_text)
+
+        # 겹치지 않는 Best는 replay 관계를 만들지 않는다.
+        _, only_best_sources = _format_best_posts(
+            [{**selected, "rank": 1, "score": 3}],
+            selected_by_id={},
+            agent_id="A999",
+            source_turn=2,
+            source_date="2026-02-27",
+            delivery_turn=3,
+        )
+        self.assertEqual(set(only_best_sources), {best_id})
+
+    def test_one_post_per_agent_per_pm_is_enforced_by_the_database(self) -> None:
+        self.community.save_post(
+            "A001", 3, "2026-02-27", "analysis", "first", "body",
+        )
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.community.save_post(
+                "A001", 3, "2026-02-27", "impression", "second", "body",
+            )
+        # 다른 거래일에는 다시 쓸 수 있다.
+        self.community.save_post(
+            "A001", 5, "2026-03-02", "analysis", "next day", "body",
+        )
+        self.assertEqual(
+            len(self.community.get_today_posts("2026-02-27")),
+            1,
+        )
 
     def test_legacy_artifacts_distinguish_title_full_body_and_am_delivery(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -559,7 +662,6 @@ class CommunityBestPolicyTests(unittest.TestCase):
                 "like_count": 0,
                 "unlike_count": 0,
                 "score": 0,
-                "author_badges": ["자산가"],
             }
             logger.log_community_selection_input(
                 agent_id="D1",
@@ -787,6 +889,64 @@ class CommunityBestPolicyTests(unittest.TestCase):
         self.assertEqual(summary["no_eligible_recipient"], 1)
         self.assertEqual(rows[0]["actual_delivery_count"], "0")
         self.assertEqual(rows[0]["delivery_status"], "no_eligible_recipient")
+
+
+class CommunityReadingOutputContractTests(unittest.TestCase):
+    """select/react 출력 계약이 빈 배열 예시로 되돌아가지 않게 고정한다.
+
+    AGENTS.md "community select/react 출력 예시는 비어 있지 않게 유지한다"
+    항목의 회귀 테스트다. v2에서 두 예시가 모두 `[]`로 바뀐 드리프트가 있었고,
+    그 상태에서는 ON arm이 오류 없이 조용히 약해진다.
+    """
+
+    def test_prompt_file_owns_no_mode_specific_schema(self) -> None:
+        text = load_prompt("community_reading.txt")
+        self.assertIn("{output_contract}", text)
+        # 한 파일이 두 모드에 쓰이므로 스키마는 호출 시점에만 주입한다.
+        self.assertNotIn("selected_post_ids", text)
+        self.assertNotIn("reactions", text)
+
+    def test_contract_examples_are_not_empty_arrays(self) -> None:
+        for label, contract in (
+            ("select", SELECT_OUTPUT_CONTRACT),
+            ("react", REACT_OUTPUT_CONTRACT),
+        ):
+            with self.subTest(mode=label):
+                self.assertNotIn("[]", contract)
+        self.assertRegex(SELECT_OUTPUT_CONTRACT, r'"selected_post_ids":\s*\[\s*\d')
+        self.assertRegex(REACT_OUTPUT_CONTRACT, r'"post_id":\s*\d+,\s*"reaction"')
+        # 빈 선택은 설계상 유효하므로 산문으로는 계속 허용한다.
+        self.assertIn("빈 배열도 유효", SELECT_OUTPUT_CONTRACT)
+        # 빈 반응은 _validate_reactions가 항상 거부한다.
+        self.assertIn("빈 배열은 허용되지 않습니다", REACT_OUTPUT_CONTRACT)
+
+    def test_rendered_prompt_carries_only_the_calling_mode_contract(self) -> None:
+        select = render_prompt(
+            "community_reading.txt",
+            mode="select",
+            persona_prompt="페르소나",
+            post_list_str="post_id=1 | 제목",
+            read_limit=5,
+            posts_content_str="",
+            output_contract=SELECT_OUTPUT_CONTRACT,
+        )
+        react = render_prompt(
+            "community_reading.txt",
+            mode="react",
+            persona_prompt="페르소나",
+            post_list_str="",
+            read_limit=1,
+            posts_content_str="post_id=1 | 제목 | 본문",
+            output_contract=REACT_OUTPUT_CONTRACT,
+        )
+        self.assertIn("selected_post_ids", select)
+        self.assertNotIn("reactions", select)
+        self.assertIn("reactions", react)
+        self.assertNotIn("selected_post_ids", react)
+        for label, text in (("select", select), ("react", react)):
+            with self.subTest(mode=label):
+                # 채워지지 않은 슬롯이 그대로 모델에 나가면 안 된다.
+                self.assertNotRegex(text, r"\{[a-z_0-9]+\}")
 
 
 if __name__ == "__main__":

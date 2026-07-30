@@ -6,11 +6,38 @@ from typing import Any
 import config
 from twinmarket_kr.community.validation import CommunityValidationError
 from twinmarket_kr.llm.analysis import parse_json_loose
-from twinmarket_kr.llm.belief import load_prompt
+from twinmarket_kr.llm.belief import render_prompt
 from twinmarket_kr.llm.call_policy import (
     INTEGRATED_STAGE_MAX_TOKENS_V1,
     INTEGRATED_STAGE_SCHEMA_VERSIONS_V1,
 )
+
+# community_reading.txt는 select와 react 두 단계가 함께 쓰는 한 파일이다.
+# 두 모드의 설명이 모두 남아 있으면 모델이 마지막에 읽은 스키마를 따라가므로,
+# 이번 호출에서 유효한 출력 계약만 프롬프트 끝에 주입한다.
+SELECT_OUTPUT_CONTRACT = """필수 JSON 키는 `selected_post_ids` 하나뿐입니다.
+`selected_post_ids`는 위 게시글 목록에 실제로 있는 post_id의 배열입니다.
+위 선택 기준에 맞는 글을 고르세요. 상한까지 억지로 채울 필요는 없고,
+읽을 만한 글이 없다고 판단하면 빈 배열도 유효합니다.
+Markdown, 코드블록, 설명, 추가 키 없이 아래 형태의 JSON object 하나만 출력하세요.
+아래 숫자는 형식 예시일 뿐이며 실제 post_id로 바꿔야 합니다.
+{
+  "selected_post_ids": [3, 7]
+}"""
+
+REACT_OUTPUT_CONTRACT = """필수 JSON 키는 `reactions` 하나뿐입니다.
+`reactions`는 위 본문이 제공된 **모든** 글에 대해 각각 정확히 하나의 항목을
+가져야 합니다. 하나라도 빠지거나 중복되면 실패입니다. 빈 배열은 허용되지 않습니다.
+각 항목의 `post_id`는 위 본문에 실제로 있는 post_id여야 하고, `reaction`은
+`like`, `unlike`, `none` 중 하나입니다.
+Markdown, 코드블록, 설명, 추가 키 없이 아래 형태의 JSON object 하나만 출력하세요.
+아래 숫자는 형식 예시일 뿐이며 실제 post_id로 바꿔야 합니다.
+{
+  "reactions": [
+    {"post_id": 101, "reaction": "like"},
+    {"post_id": 102, "reaction": "none"}
+  ]
+}"""
 from twinmarket_kr.llm.client import OpenRouterClient, response_content, stable_llm_seed
 from twinmarket_kr.llm.response_journal import (
     ResponseJournalError,
@@ -28,8 +55,13 @@ def _validate_selection(
 ) -> tuple[list[int], list[str]]:
     raw_ids = raw.get("selected_post_ids")
     errors: list[str] = []
+    # SELECT_OUTPUT_CONTRACT가 "추가 키 없이 ... selected_post_ids 하나뿐"이라고
+    # 요구하므로 다른 단계와 같은 강도로 extra key를 거부한다.
+    unknown_keys = sorted(set(raw) - {"selected_post_ids"})
+    if unknown_keys:
+        errors.append(f"top_level_keys:unknown={unknown_keys}")
     if not isinstance(raw_ids, list):
-        return [], ["selected_post_ids:requires_list"]
+        return [], [*errors, "selected_post_ids:requires_list"]
     candidate: list[int] = []
     for post_id in raw_ids:
         if isinstance(post_id, bool):
@@ -60,10 +92,15 @@ def _validate_reactions(
     available: set[int],
 ) -> tuple[list[dict[str, Any]], list[str]]:
     raw_reactions = raw.get("reactions")
+    # REACT_OUTPUT_CONTRACT도 reactions 한 key만 허용한다.
+    unknown_keys = sorted(set(raw) - {"reactions"})
+    key_errors = (
+        [f"top_level_keys:unknown={unknown_keys}"] if unknown_keys else []
+    )
     if not isinstance(raw_reactions, list):
-        return [], ["reactions:requires_list"]
+        return [], [*key_errors, "reactions:requires_list"]
     candidate: list[dict[str, Any]] = []
-    errors: list[str] = []
+    errors: list[str] = list(key_errors)
     for item in raw_reactions:
         if not isinstance(item, dict) or isinstance(item.get("post_id"), bool):
             errors.append("reactions:item_requires_object_and_integer_id")
@@ -99,13 +136,14 @@ async def community_reading_select(
     client = client or OpenRouterClient()
     if not post_list:
         return []
-    prompt_template = load_prompt("community_reading.txt")
-    prompt = prompt_template.format(
+    prompt = render_prompt(
+        "community_reading.txt",
         mode="select",
         persona_prompt=agent.get("persona_prompt", ""),
         post_list_str=_format_post_list(post_list),
         read_limit=int(read_limit),
         posts_content_str="",
+        output_contract=SELECT_OUTPUT_CONTRACT,
     )
     available = {int(post["post_id"]) for post in post_list}
     selected: list[int] = []
@@ -128,7 +166,7 @@ async def community_reading_select(
         seed_schedule=seeds,
         max_tokens=max_tokens,
         validation_attempts=validation_attempts,
-        validation_procedure_version="community-read-select-validator-v1",
+        validation_procedure_version="community-read-select-validator-v2",
         response_format={"type": "json_object"},
         semantic_inputs={
             "available_post_ids": sorted(available),
@@ -235,13 +273,14 @@ async def community_reading_react(
     client = client or OpenRouterClient()
     if not posts_content:
         return []
-    prompt_template = load_prompt("community_reading.txt")
-    prompt = prompt_template.format(
+    prompt = render_prompt(
+        "community_reading.txt",
         mode="react",
         persona_prompt=agent.get("persona_prompt", ""),
         post_list_str="",
         read_limit=len(posts_content),
         posts_content_str=_format_posts_content(posts_content),
+        output_contract=REACT_OUTPUT_CONTRACT,
     )
     available = {int(post["post_id"]) for post in posts_content}
     validated: list[dict[str, Any]] = []
@@ -264,7 +303,7 @@ async def community_reading_react(
         seed_schedule=seeds,
         max_tokens=max_tokens,
         validation_attempts=validation_attempts,
-        validation_procedure_version="community-read-react-validator-v1",
+        validation_procedure_version="community-read-react-validator-v2",
         response_format={"type": "json_object"},
         semantic_inputs={"available_post_ids": sorted(available)},
     )
@@ -360,10 +399,9 @@ async def community_reading_react(
 def _format_post_list(post_list: list[dict[str, Any]]) -> str:
     lines = []
     for post in post_list:
-        badges = ", ".join(post.get("author_badges") or []) or "없음"
         lines.append(
             f"[post_id={post['post_id']}] [{post.get('post_type', '')}] {post.get('title', '')} "
-            f"| 작성자: {post.get('anonymous_code', '')} [{badges}] "
+            f"| 작성자: {post.get('anonymous_code', '')} "
             f"| like {post.get('like_count', 0)} / unlike {post.get('unlike_count', 0)} "
             f"/ score {post.get('score', 0)}"
         )
@@ -373,7 +411,6 @@ def _format_post_list(post_list: list[dict[str, Any]]) -> str:
 def _format_posts_content(posts_content: list[dict[str, Any]]) -> str:
     parts = []
     for post in posts_content:
-        badges = ", ".join(post.get("author_badges") or []) or "없음"
         profile_text = ""
         if post.get("author_profile"):
             profile_text = "\n[작성자 프로필] " + json.dumps(
@@ -382,7 +419,7 @@ def _format_posts_content(posts_content: list[dict[str, Any]]) -> str:
         parts.append(
             f"--- post_id={post['post_id']} [{post.get('post_type', '')}] ---\n"
             f"제목: {post.get('title', '')}\n"
-            f"작성자: {post.get('anonymous_code', '')} | 뱃지: {badges}\n"
+            f"작성자: {post.get('anonymous_code', '')}\n"
             f"본문: {post.get('content', '')}"
             f"{profile_text}"
         )

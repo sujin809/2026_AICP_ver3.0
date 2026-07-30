@@ -324,6 +324,13 @@ SIM_DDLS = [
         source_decision_id TEXT REFERENCES simulation_decisions(decision_id)
     );
     """,
+    # 한 agent는 한 PM에 최대 한 글만 쓴다. 테이블 정의에 UNIQUE를 넣으면
+    # ``CREATE TABLE IF NOT EXISTS`` 때문에 신규 DB만 제약을 갖게 되므로,
+    # 기존 DB에도 같은 제약이 적용되는 unique index로 강제한다.
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_community_posts_agent_date
+        ON community_posts (agent_id, date);
+    """,
     """
     CREATE TABLE IF NOT EXISTS community_interactions (
         interaction_id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -815,7 +815,10 @@ flowchart TD
 
 - D1/D2만 게시 여부를 판단한다.
 - 작성은 강제하지 않는다.
-- 한 agent가 한 PM에 최대 한 글을 쓴다.
+- 한 agent가 한 PM에 최대 한 글을 쓴다. 이 제약은 제어흐름만 믿지 않고
+  `community_posts`의 unique index `idx_community_posts_agent_date(agent_id, date)`로
+  DB에서 함께 강제한다. table 정의에 `UNIQUE`를 넣으면
+  `CREATE TABLE IF NOT EXISTS` 때문에 신규 DB만 제약을 갖게 되므로 index를 쓴다.
 - 본문은 최대 500자다.
 - 500자는 허용, 501자는 validation fail이다.
 - 초과 본문을 자동으로 자르지 않는다.
@@ -836,7 +839,6 @@ post provenance:
 
 - post ID
 - 익명 닉네임
-- 동적 badge
 - 제목
 - 글 유형
 - like/unlike count
@@ -848,11 +850,22 @@ post provenance:
 - private reasoning
 - portfolio
 - 최근 거래
+- 작성자 평판 신호
+
+작성자 badge는 구현하지 않는다. 과거 legacy runtime의 동적 badge 3종
+(`상위 수익자`, `자산가`, `커뮤니티 인플루언서`)은 제거했다. 제거 이유는
+§12.9에 적는다. 후보 화면에서 저자 쪽 신호는 익명 닉네임뿐이고, 닉네임은
+`md5(agent_id)`에서 유도한 무정보 문자열이다. 당일 게시글의 like/unlike/score는
+반응 전이므로 대체로 0이다. 따라서 후보 선택은 실질적으로 제목과 글 유형으로
+이루어진다.
 
 선택한 글만 `full_body`로 조회한다.
 
-- D1: 원문 전체 + 익명 닉네임·badge
+- D1: 원문 전체 + 익명 닉네임
 - D2: 위 내용 + 후보 board 시점에 동결한 portfolio 요약·최근 fill 3건
+
+즉 저자에 대한 추가 정보는 D2의 동결 profile 하나뿐이며, D1은 저자 관련
+정보를 받지 않는다.
 
 ### 12.6 reaction과 Best
 
@@ -897,7 +910,39 @@ score = like_count - unlike_count
 - `best_full_body`
 - `selected_full_body_replay`
 
+두 relation은 원장에만 남는 라벨이 아니라 **둘 다 인용 가능한 근거 ID**다.
+겹치는 글은 Best 항목에서 본문을 한 번만 직렬화하고 두 exposure ID를 같은
+본문에 매핑하므로, claim은 어느 관계로든 그 글을 인용할 수 있다.
+
 미선택 `title_only` 후보는 분석 로그에만 남고 claim이나 STB 근거가 될 수 없다.
+따라서 community thinking 단계 자체도 full-body 노출(전일 Best 또는 직접 선택해
+읽은 글)이 하나라도 있을 때만 실행한다. title-only 후보만 본 agent에게는
+claim 단계를 열지 않는다.
+
+### 12.9 badge를 두지 않는 이유
+
+legacy runtime은 상위 20% 기준의 동적 badge 3종을 후보 화면과 full-body 화면,
+다음 AM 요약에 함께 노출했다. 현재 baseline은 이를 제거했다. 근거는 다음과 같다.
+
+- 세 badge 모두 임계값이 없어 상위 20% 인원을 무조건 채웠다. 누적 like가
+  전원 0인 첫 PM에도 `agent_id` 사전순 앞쪽 20%가 `커뮤니티 인플루언서`를
+  받았고, 그 라벨이 후보 선택 확률을 높여 실제 like·Best 진입으로 이어질 수
+  있었다. 즉 평판 위계의 초기 조건이 agent ID 정렬 artifact였다.
+- `자산가`는 절대 평가액 상위 20%였다. cohort의 초기자본은 1억 90명과
+  10억 10명이므로 10억 집단이 사실상 고정으로 상위를 점유했다. 동적 평판이
+  아니라 초기자본 티어 라벨로 동작했다.
+- `커뮤니티 인플루언서`의 분모는 cohort 100명이 아니라 그날까지 글을 쓴
+  agent 수여서, 다른 두 badge와 기준이 달랐고 인원이 매일 변했다.
+- badge 규칙(비율·임계값·분모)은 어떤 정책 문서에도 없었고 봉인 StudySpec의
+  `community_policy` 검증 대상도 아니었다. 처치의 일부인데 봉인되지 않은
+  자유 변수였다.
+- badge는 community mode ON에만 존재하므로 OFF/ON 처치와 완전히 교란된다.
+  2-arm 설계에서 badge 효과를 분리해 주장할 수 없다.
+
+제거 범위는 계산·저장·노출 전부다. `community/badge.py`, `config`의
+`BADGE_*_PERCENTILE`, `author_badges` CSV 컬럼, 선택 프롬프트의 평판 참고
+문구를 모두 삭제했다. 회귀 테스트가 네 렌더러와 선택 프롬프트에서 badge
+문자열이 사라졌음을 확인한다.
 
 ---
 
@@ -935,8 +980,8 @@ erDiagram
 | `portfolio_state` | turn 0 + agent-event당 1 | agent, turn |
 | `trade_log` | fill 분석용 호환 ledger | analysis→LTB 전체 ID |
 | `TradingDetails` | legacy 방향 분석 호환 | date, stock, agent, direction |
-| `community_posts` | 게시한 경우 | source LTB/fill/decision |
-| `community_interactions` | reader-post reaction | reaction |
+| `community_posts` | 게시한 경우, agent-PM당 최대 1 | source LTB/fill/decision, unique(agent, date) |
+| `community_interactions` | reader-post reaction | reaction, unique(agent, post) |
 | `community_logs` | agent-PM community snapshot | Best/read/candidate |
 
 ### 13.3 ID 규칙
@@ -1336,7 +1381,7 @@ cohort·동일 call policy·동일 schedule이 검증된 뒤에만 community tre
 | Git·sealed news | 확인 | 수진 기준 HEAD와 Git tracked news blob 일치. 90 event, 760 slot, shortage 59건 |
 | main news reader | 무과금 PASS | `05 -> simulation.py -> NewsAgent`가 sealed event ID를 직접 사용. D0 전체 headline, D1/D2 전체 제공 summary, D2 cutoff-safe 최근 7일 최대 5건. legacy pkl/CSV/JSON-split runtime reader는 제거됨 |
 | 뉴스 quota | 무과금 PASS | sealer가 종목 5·섹터 3·경제 2를 독립 적용하고 카테고리 간 backfill을 금지. 1~9건은 shortage 기록 후 실행 지속, 0건은 입력 봉인 실패. 재봉인 중 news bytes는 불변 |
-| Community 정책 | 무과금 PASS | D0 수동 참여 0/Best 본문 수신, D1·D2 선택 최대 5, 글 500자, full-body Best, self-exclusion/no-backfill과 exposure 로그가 공통 모듈에 연결됨 |
+| Community 정책 | 무과금 PASS | D0 수동 참여 0/Best 본문 수신, D1·D2 선택 최대 5, 글 500자, full-body Best, self-exclusion/no-backfill과 exposure 로그가 공통 모듈에 연결됨. badge 3종은 §12.9 근거로 계산·저장·노출 전부 제거. agent-PM 1글은 unique index로 DB 강제. Best∩선택 중복 글은 본문 1회 직렬화 + 두 exposure ID 모두 인용 가능 |
 | STB/LTB·decision/fill | 무과금 PASS | 별도 STB/LTB prompt와 `previous LTB + current STB -> analysis -> decision -> fill -> post-fill LTB` 계보가 공통 DB에 연결됨. prompt wiring 회귀 포함 전체 suite PASS |
 | outcome | 무과금 PASS | next-turn/H1/H5가 frozen schedule의 due event에서만 dim_6에 1회 소비되고 terminal right-censor 처리됨 |
 | event checkpoint·journal | 무과금 PASS | `EventCheckpointRuntime`, run signature, `.runtime/committed.db`, response journal, running rollback과 commit-decided recovery가 `05` 기본 경로에 연결됨. provider JSON은 최초 수신부터 canonical key order로 정규화하고, 1 agent/45거래일 OFF/ON 실제 중단·재개 offline 검증과 failpoint/resume 회귀를 통과함 |
@@ -1394,10 +1439,10 @@ P0는 live 실행 전에 모두 해결해야 한다.
 
 | 우선순위 | 항목 | 의미 |
 | --- | --- | --- |
-| P0 | final tree 안정화 | **무과금 범위 완료**: active 경로의 legacy 참조·중복 schema·깨진 문서 link를 검사하고 과거 분석/validation artifact를 archive로 격리. live freeze는 별도 승인 record가 필요 |
-| P0 | 전체 무과금 회귀 | **완료**: 전체 `pytest -q` 159 passed, 11 subtests passed; official profile 1 agent/45거래일 OFF/ON 실제 중단·재개 offline 검증과 checkpoint/resume 회귀를 기록 |
+| P0 | final tree 안정화 | **무과금 범위 완료**: active 경로의 legacy 참조·중복 schema·깨진 문서 link를 검사하고 과거 분석/validation artifact를 archive로 격리. `preparation/GENERATED_INPUT_CONTRACT.md`는 활성 코드 참조가 0이고 현행 D2 profile 정책과 충돌해 `archive/legacy_docs/`로 격리함. live freeze는 별도 승인 record가 필요 |
+| P0 | 전체 무과금 회귀 | **완료**: 전체 `pytest -q` 167 passed, 17 subtests passed; official profile 1 agent/45거래일 OFF/ON 실제 중단·재개 offline 검증과 checkpoint/resume 회귀를 기록. badge 제거·exposure relation·unique index 변경 뒤 새 manifest로 45거래일 90 event offline E2E를 OFF(1 agent)·ON(3 agent)·ON(7 agent, D2 포함)으로 재실행. OFF는 community 원장 4종 0행, ON은 agent-PM 1글·자기 글 반응 0·score 정합·agent×PM 격자·500자·Best 예정=실제 delivery·마지막 PM right_censored·`title_only`/`full_body` 분리·D2만 detailed profile 수신·D1 profile 누출 0·badge 흔적 0을 모두 통과 |
 | P0 | 최종 재봉인 | **완료**: production prompt·code·persona projection hash를 candidate에 반영하고, news byte equality 확인 뒤 official selection/review를 갱신 |
-| P0 | reasoning-off live canary | **대기**: 승인된 1회 유료 호출로 provider/model, request reasoning 객체, 빈 reasoning, reasoning token 0을 증명 |
+| P0 | reasoning-off live canary | **대기**: 승인된 1회 유료 호출로 provider/model, request reasoning 객체, 빈 reasoning, reasoning token 0을 증명. badge 제거로 prompt·schema·policy가 바뀌었으므로 RUNBOOK §10에 따라 이전 manifest 기준 canary는 재사용할 수 없고 새 manifest로 수행한다 |
 | P0 | report final rehearsal | **무과금 범위 완료**: `99_validate`/방향성 검증의 external output guard와 3종 fixture PDF를 run 밖 `derived/` 경로에서 QA. real complete run report는 live 본실험 뒤 생성 |
 | P1 | fake profile 준비 | real 10(+shortage 그대로)+fake 1의 bullish/bearish 별도 sealed profile과 pair 검증 |
 | P1 | instrument 일반화 | stock code/name, 뉴스, 가격, target, persona 문구와 report label을 하나의 새 profile로 봉인 |

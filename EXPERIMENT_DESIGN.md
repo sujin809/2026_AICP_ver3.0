@@ -250,23 +250,34 @@ analysis/decision이 방금 생성한 `LTB_t`를 다시 읽는 순환은 금지�
 
 | Depth | 쓰기 | 선택 읽기·반응 | 다음 AM Best |
 | --- | --- | --- | --- |
-| D0 | 불가 | 불가 | 자기 글 문제가 없는 Best 원문 전체, 익명 닉네임·뱃지 |
-| D1 | 게시 여부 판단, PM당 최대 1개 | 최대 5개 | Best 원문 전체, 익명 닉네임·뱃지 |
+| D0 | 불가 | 불가 | 자기 글 문제가 없는 Best 원문 전체, 익명 닉네임 |
+| D1 | 게시 여부 판단, PM당 최대 1개 | 최대 5개 | Best 원문 전체, 익명 닉네임 |
 | D2 | 게시 여부 판단, PM당 최대 1개 | 최대 5개 | D1 정보 + 작성자의 PM 시점 동결 profile |
 
 D1+D2 70명만 능동 작성·선택·반응 후보이며 게시를 강제하지 않는다. D0는
 게시, 후보 선택, 반응을 하지 않지만 다음 AM Best의 **본문 전체**를 받는다.
 
-D2의 동결 profile은 해당 PM 이전의 포트폴리오 요약과 최근 3건 거래까지만
-포함한다. private belief, stable agent ID, 미래 상태를 노출하지 않는다.
+작성자 평판 badge는 두지 않는다. legacy 동적 badge 3종은 임계값 없는 상위
+20% 배정과 초기자본 의존성 때문에 처치를 교란하는 미봉인 자유 변수였고,
+계산·저장·노출을 모두 제거했다. 근거는 `ARCHITECTURE.md` §12.9에 있다.
+따라서 저자 쪽 추가 정보는 D2 동결 profile 하나뿐이며 D1은 익명 닉네임만 본다.
+
+D2의 동결 profile은 해당 PM의 체결까지 반영한 후보 보드 시점 snapshot이며
+포트폴리오 요약과 최근 3건 체결까지만 포함한다. 글이 그날의 거래를 이야기하는
+글이므로 같은 PM의 체결을 포함하는 것이 정본이다. private belief, stable
+agent ID, 미래 상태는 노출하지 않으며 다음 AM에 다시 조회하지 않는다.
 
 ### 8.2 게시와 읽기
 
 - 게시글 본문은 글당 최대 500자다.
 - 500자는 통과하고 501자는 서버가 거부한다.
 - 의미를 바꿀 수 있는 자동·무음 잘라내기는 하지 않는다.
-- 후보 보드에는 익명 닉네임·동적 뱃지·제목·post type·동결 반응
-  count/score만 보이고 본문은 넣지 않는다.
+- 한 agent는 한 PM에 최대 한 글만 쓴다. `community_posts`의
+  unique index `(agent_id, date)`가 이를 DB에서 강제한다.
+- 후보 보드에는 익명 닉네임·제목·post type·동결 반응 count/score만 보이고
+  본문과 작성자 평판 신호는 넣지 않는다.
+- 당일 게시글의 반응 count/score는 반응 전이라 대체로 0이므로, 후보 선택은
+  실질적으로 제목과 post type으로 이루어진다. 이는 의도한 성질이다.
 - 이 후보 노출은 `title_only`로 기록한다.
 - 각 agent의 persona를 받은 LLM이 `selected_post_ids`를 반환한다.
 - 선택 결과는 0개여도 유효하며 D1과 D2 모두 5개를 강제로 채우지 않는다.
@@ -290,8 +301,10 @@ score 내림차순, like 수 내림차순, 기존 결정론적 tie-break 순으�
 다음 거래일 AM에는 전역 Best의 제목뿐 아니라 동결된 원문 전체를 전달한다.
 작성자에게 자기 글은 전달하지 않고 그 자리를 6위 글로 채우지 않는다. 따라서
 전역 Top 5 작성자는 최대 4개만 받을 수 있다. 같은 글을 전날 선택해 읽었고
-Best로도 받는 경우 본문은 한 번만 직렬화하되 `selected_full_body`와
-`best_full_body` 두 관계를 모두 남긴다.
+Best로도 받는 경우 본문은 한 번만 직렬화하되 `selected_full_body_replay`와
+`best_full_body` 두 관계를 모두 남긴다. 두 관계는 원장 라벨에 그치지 않고
+claim이 인용할 수 있는 근거 ID로 함께 등록한다. 본문 1회 직렬화 때문에 어느
+한 관계로만 인용이 제한되면 안 된다.
 
 마지막 PM의 Best는 다음 AM이 없으므로 `right_censored`로 기록한다.
 예정 audience, 실제 delivery, self-exclusion, no-backfill을 validator가
@@ -309,7 +322,9 @@ reader별로 재현할 수 있어야 한다.
 - community interpretation claim과 실제 source ID
 
 미선택 `title_only` 글은 분석용 노출로만 남기고 다음 AM claim이나 STB 근거로
-사용하지 않는다. 커뮤니티 글은 검증되지 않은 투자자 발언이며 실제 거래
+사용하지 않는다. 이 규칙은 claim 화이트리스트뿐 아니라 단계 진입 조건에도
+적용한다. full-body 노출이 하나도 없는 agent에게는 community interpretation
+단계를 실행하지 않는다. 커뮤니티 글은 검증되지 않은 투자자 발언이며 실제 거래
 사실은 canonical fill ledger만 신뢰한다.
 
 ## 9. LLM 호출 정책

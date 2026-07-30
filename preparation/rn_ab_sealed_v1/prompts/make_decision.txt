@@ -2,7 +2,7 @@
 
 {persona_prompt}
 
-오늘의 Belief:
+이전 Long-Term Belief와 오늘의 Short-Term Belief:
 {today_belief}
 
 거래 전 시장 분석:
@@ -78,6 +78,3 @@ Step 1의 방향과 Step 2의 수량을 종합하여 최종 action, requested_qu
 }
 
 price, order_type, hold, market, limit 필드는 출력하지 마세요.
-
-입력 정보(JSON):
-<<STAGE_PAYLOAD_JSON>>
