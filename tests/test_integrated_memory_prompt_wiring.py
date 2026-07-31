@@ -736,7 +736,36 @@ class StbScopeAndAnalysisEvidenceContractTests(unittest.IsolatedAsyncioTestCase)
         # 겹치지 않은 news:b는 위반 목록에 들어가지 않는다.
         self.assertNotIn("same_id_in_both_relations:['news:a', 'news:b']", retry)
 
-    async def test_retry_prompt_states_the_support_side_tiebreak_rule(self) -> None:
+    async def test_retry_prompt_does_not_steer_evidence_direction(self) -> None:
+        """재시도 힌트가 방향 기본값을 주면 연구자 편향이 데이터에 섞인다.
+
+        evidence의 support/contradict는 관측 대상이므로, 규칙(한 쪽에만)은
+        알려주되 어느 쪽인지는 지정하지 않는다.
+        """
+
+        broken = _evidence(dim_1_support=["news:a"])
+        broken["dim_2"] = {"support": ["news:a"], "contradict": ["news:a"]}
+        clean = _evidence(dim_1_support=["news:a"])
+        client = await self._run_stb_sequence(
+            [
+                {**_stb_dimensions("stb"), "dimension_evidence": broken},
+                {**_stb_dimensions("stb"), "dimension_evidence": clean},
+            ]
+        )
+        retry = client.prompts[1]
+        # 규칙은 전달된다.
+        self.assertIn("한 쪽에만 넣으세요", retry)
+        self.assertIn("dimension_evidence.dim_2:same_id_in_both_relations", retry)
+        # 방향 계도 문구는 없어야 한다.
+        for steering in (
+            "support에만",
+            "support 쪽",
+            "support로 두세요",
+            "contradict에만",
+        ):
+            self.assertNotIn(steering, retry)
+
+    async def test_retry_prompt_states_the_scope_rule(self) -> None:
         broken = _evidence(dim_1_support=["news:a"])
         broken["dim_2"] = {"support": ["news:a"], "contradict": ["news:a"]}
         clean = _evidence(dim_1_support=["news:a"])
@@ -748,7 +777,7 @@ class StbScopeAndAnalysisEvidenceContractTests(unittest.IsolatedAsyncioTestCase)
         )
         retry = client.prompts[1]
         self.assertIn("한 쪽에만 넣으세요", retry)
-        self.assertIn("support에만", retry)
+        self.assertIn("페르소나의 판단에 따라", retry)
         self.assertIn("지적되지 않은 다른 차원은 그대로 두세요", retry)
 
     async def test_char_limit_error_reports_the_actual_length(self) -> None:
