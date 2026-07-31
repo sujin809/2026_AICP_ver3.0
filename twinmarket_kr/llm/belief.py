@@ -215,7 +215,7 @@ async def _generate_hierarchical_belief(
         seed_schedule=seeds,
         max_tokens=max_tokens,
         validation_attempts=validation_attempts,
-        validation_procedure_version=f"{audit_label}-validator-v3",
+        validation_procedure_version=f"{audit_label}-validator-v4",
         response_format={"type": "json_object"},
         semantic_inputs={
             "evidence_field": evidence_field,
@@ -287,16 +287,17 @@ async def _generate_hierarchical_belief(
                             f"{sorted(flipped_ids)}"
                         )
         if previous_dimensions is not None and dimensions:
-            unchanged = [
-                key
+            # 차원별 문장 유지는 정당하다. 관점이 안 변한 차원에 새 표현을
+            # 강제하면 임베딩 기반 deviation 측정에 억지 패러프레이즈 노이즈가
+            # 깔리고, 그 노이즈는 진짜 변화가 없을수록 커진다(신호와 역방향).
+            # 라이브에서도 통합(evidence 규칙)은 전부 지키고 dim_6 문장만
+            # 반복한 agent가 소진됐다. 퇴행적 전체 복사만 막는다: 여섯 차원
+            # 전부가 직전 LTB와 완전히 동일하면 통합이 아니므로 거부한다.
+            if all(
+                dimensions[key] == previous_dimensions[key]
                 for key in BELIEF_DIMENSION_KEYS
-                if dimensions[key] == previous_dimensions[key]
-            ]
-            if unchanged:
-                errors.append(
-                    "all_ltb_dimensions_must_be_recursively_rewritten:"
-                    + ",".join(unchanged)
-                )
+            ):
+                errors.append("ltb_must_not_copy_all_six_dimensions_verbatim")
         due_ids = required_dim_6_outcome_ids or set()
         if due_ids and evidence:
             cited = [
@@ -309,10 +310,6 @@ async def _generate_hierarchical_belief(
                 errors.append("every_due_outcome_must_be_cited_once_in_dim_6")
         return dimensions, evidence, errors
 
-    if journal_call is not None:
-        # retry 계보가 열렸으면 시드가 변주된다. journal 요청 identity와
-        # 실제 API 호출이 같은 스케줄을 쓰도록 여기서 덮어쓴다.
-        seeds = list(journal_call.seed_schedule)
     if journal_call is not None and journal_call.replay is not None:
         raw = dict(journal_call.replay.response)
         dimensions, evidence, errors = _validate(raw)
@@ -424,11 +421,12 @@ async def _generate_hierarchical_belief(
                     if required_dim_6_outcome_ids
                     else ""
                 )
-                # day2 PM 라이브에서 관점이 유지된 agent가 이전 LTB 문장을
-                # 복사해 recursively_rewritten 위반으로 소진 직전까지 갔다.
+                # 전 차원 완전 복사 거부 규칙은 프롬프트에 노출하지 않는
+                # 구현 상세이므로, 위반으로 거부됐을 때만 여기서 알려준다.
                 + (
-                    " 지적된 차원은 이전 문장을 복사하지 말고, 같은 관점이라도"
-                    " 그 이유를 담은 다른 표현의 새 문장으로 다시 쓰세요."
+                    " 여섯 차원 전체를 직전 Long-Term Belief와 완전히 동일하게"
+                    " 제출할 수는 없습니다. 오늘의 Short-Term Belief와 체결을"
+                    " 통합한 결과를 반영해 다시 작성하세요."
                     if previous_dimensions is not None
                     else ""
                 )

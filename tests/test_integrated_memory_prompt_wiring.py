@@ -245,7 +245,7 @@ class IntegratedMemoryPromptWiringTests(unittest.IsolatedAsyncioTestCase):
             "post_fill_long_term_belief",
         )
         self.assertIn(
-            "핵심 관점이 이어지는 이유를 담은 새 문장",
+            "유지되는 차원은 그 이유와 함께 정리하세요",
             client.prompts[0],
         )
         payload = _stage_payload(client.prompts[0])
@@ -765,6 +765,85 @@ class StbScopeAndAnalysisEvidenceContractTests(unittest.IsolatedAsyncioTestCase)
         self.assertIn("dim_2 exceeds the 150-character limit", retry)
         self.assertIn("current=187", retry)
         self.assertIn("한도 안으로 줄여", retry)
+
+    async def _run_ltb(self, client: Any) -> dict[str, Any]:
+        return await update_long_term_belief(
+            {"agent_id": "agent-1", "news_depth": 1, "persona_prompt": "persona"},
+            event={
+                "event_id": "2026-02-27/PM",
+                "turn": 2,
+                "date": "2026-02-27",
+                "subturn": "pm",
+            },
+            previous_ltb={"dimensions": _dimensions("previous ltb")},
+            current_stb={
+                "dimensions": _stb_dimensions("current stb"),
+                "dimension_evidence": _evidence(dim_1_support=["news:current"]),
+            },
+            transaction_episode={
+                "fill_id": "fill:current",
+                "decision_id": "decision:current",
+                "action": "buy",
+                "requested_quantity": 2,
+                "filled_quantity": 2,
+                "executed_price": 100.0,
+                "fee": 0.0,
+            },
+            eligible_price_outcomes_dim_6_only=[],
+            client=client,
+            seed=8,
+            validation_attempts=2,
+        )
+
+    async def test_ltb_allows_per_dimension_carryover_text(self) -> None:
+        """관점이 안 변한 차원의 문장 유지는 정당하다.
+
+        차원별 강제 재서술은 임베딩 deviation 측정에 억지 패러프레이즈
+        노이즈를 깔고, 라이브에서 dim_6 반복만으로 2 agent가 소진됐다.
+        """
+
+        carried = _dimensions("previous ltb")  # dim_6 포함 대부분 유지
+        carried["dim_1"] = "오늘 신호를 통합해 방향 전망을 조정했다"
+        client = _CaptureClient(
+            {**carried, "integration_evidence": _evidence(dim_1_support=["news:current"])}
+        )
+        result = await self._run_ltb(client)
+        self.assertEqual(result["dim_6"], "previous ltb dimension 6")
+        self.assertEqual(len(client.prompts), 1)  # 첫 시도 수락
+
+    async def test_ltb_rejects_verbatim_copy_of_all_six_dimensions(self) -> None:
+        full_copy = {
+            **_dimensions("previous ltb"),
+            "integration_evidence": _evidence(dim_1_support=["news:current"]),
+        }
+        fixed = {
+            **{k: f"통합된 {k}" for k in full_copy if k.startswith("dim_")},
+            "integration_evidence": _evidence(dim_1_support=["news:current"]),
+        }
+        client = _SequenceClient([full_copy, fixed])
+        result = await self._run_ltb(client)
+        self.assertEqual(len(client.prompts), 2)
+        retry = client.prompts[1]
+        self.assertIn("ltb_must_not_copy_all_six_dimensions_verbatim", retry)
+        self.assertIn("완전히 동일하게", retry)
+        self.assertEqual(result["dim_1"], "통합된 dim_1")
+
+    async def test_ltb_prompt_no_longer_demands_forced_rewrite(self) -> None:
+        client = _CaptureClient(
+            {
+                **_dimensions("post-fill ltb"),
+                "integration_evidence": _evidence(dim_1_support=["news:current"]),
+            }
+        )
+        await self._run_ltb(client)
+        instructions = client.prompts[0].rsplit("입력 정보(JSON):", 1)[0]
+        for banned in (
+            "새 문장으로 여섯 차원을 모두 재서술",
+            "모두 다음 거래용 새 문장으로 작성",
+            "이전 문장을 그대로 복사하거나",
+            "`maintain`",
+        ):
+            self.assertNotIn(banned, instructions)
 
     def _analysis_response(self, **overrides: Any) -> dict[str, Any]:
         response = {
