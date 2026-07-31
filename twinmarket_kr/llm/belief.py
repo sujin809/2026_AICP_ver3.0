@@ -327,8 +327,25 @@ async def _generate_hierarchical_belief(
                 for evidence_id in dim_6_evidence.get(relation, [])
                 if evidence_id in due_ids
             ]
-            if len(cited) != len(set(cited)) or set(cited) != due_ids:
-                errors.append("every_due_outcome_must_be_cited_once_in_dim_6")
+            cited_set = set(cited)
+            if len(cited) != len(cited_set) or cited_set != due_ids:
+                # 도래 outcome이 3건 동시에 몰리면(같은 이벤트에 h1/h5/
+                # next_turn이 겹치는 날) 모델이 그중 하나를 빠뜨리거나
+                # 하나를 두 번 인용하는 실수를 반복했다. 어떤 ID가
+                # 빠졌는지/중복됐는지 말해주지 않으면 재시도가 무엇을
+                # 고쳐야 하는지 알 수 없어 10회 내내 같은 실수를 반복한다.
+                missing = sorted(due_ids - cited_set)
+                duplicated = sorted(
+                    {evidence_id for evidence_id in cited if cited.count(evidence_id) > 1}
+                )
+                detail = ""
+                if missing:
+                    detail += f":missing={missing}"
+                if duplicated:
+                    detail += f":duplicated={duplicated}"
+                errors.append(
+                    f"every_due_outcome_must_be_cited_once_in_dim_6{detail}"
+                )
         return dimensions, evidence, errors
 
     if journal_call is not None and journal_call.replay is not None:
@@ -440,6 +457,10 @@ async def _generate_hierarchical_belief(
                     " 가격 결과 ID의 방향은 dim_6 문장 내용과 무관하게"
                     " 정해져 있습니다: action_aligned_markout가 양수면 support,"
                     " 음수면 contradict에 정확히 한 번씩 넣으세요."
+                    " 입력에 제공된 가격 결과 ID 전부를 빠짐없이, 각각 한 번만"
+                    " 인용해야 합니다. every_due_outcome 오류에 missing이 있으면"
+                    " 그 ID를 추가하고, duplicated가 있으면 중복분을 하나만"
+                    " 남기세요."
                     if required_dim_6_outcome_ids
                     else ""
                 )
