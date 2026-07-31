@@ -1146,15 +1146,16 @@ class MemoryAgent:
             normalized_integration_evidence,
             label="post-fill LTB integration_evidence",
         )
-        unchanged = [
-            key
+        # 차원별 문장 유지는 정당하다. 관점이 안 변한 차원에 새 표현을 강제하면
+        # 임베딩 기반 deviation 측정에 억지 패러프레이즈 노이즈가 깔린다.
+        # 퇴행적 전체 복사만 막는다. 같은 정책이 생성 경계(llm/belief.py)와
+        # 이 저장 경계 두 곳에 있으므로 함께 유지해야 한다.
+        if all(
+            belief[key] == parent["dimensions"][key]
             for key in HIERARCHICAL_DIMENSION_KEYS
-            if belief[key] == parent["dimensions"][key]
-        ]
-        if unchanged:
+        ):
             raise ValueError(
-                "post-fill LTB must rewrite all six dimensions; unchanged="
-                + ",".join(unchanged)
+                "post-fill LTB must not copy all six dimensions verbatim"
             )
         summary = _required_text(
             belief_summary,

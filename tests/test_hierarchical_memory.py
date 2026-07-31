@@ -660,9 +660,32 @@ class HierarchicalMemoryTests(unittest.TestCase):
             pre_portfolio={"cash": 1_000, "quantity": 0},
             post_portfolio={"cash": 800, "quantity": 2},
         )
-        incomplete_rewrite = _dimensions("long")
-        incomplete_rewrite["dim_4"] = _dimensions("initial")["dim_4"]
-        with self.assertRaisesRegex(ValueError, "rewrite all six dimensions"):
+        # 차원별 문장 유지는 허용된다. 관점이 안 변한 차원에 새 표현을
+        # 강제하면 임베딩 deviation 측정에 억지 패러프레이즈가 섞인다.
+        carried = _dimensions("long")
+        carried["dim_4"] = _dimensions("initial")["dim_4"]
+        carried_ltb = self.memory.save_post_fill_ltb(
+            agent_id="agent-1",
+            turn=1,
+            date="2026-02-27",
+            subturn="am",
+            parent_ltb_id=ltb_0,
+            stb_id=stb_id,
+            decision_id=decision_id,
+            fill_id=fill_id,
+            dimensions=carried,
+            integration_evidence=_evidence(),
+            belief_summary="human log",
+            view_change="changed",
+        )
+        self.assertTrue(carried_ltb)
+        self.assertEqual(
+            self.memory.get_ltb(carried_ltb)["dimensions"]["dim_4"],
+            _dimensions("initial")["dim_4"],
+        )
+
+        # 퇴행적 전체 복사만 거부한다.
+        with self.assertRaisesRegex(ValueError, "copy all six dimensions verbatim"):
             self.memory.save_post_fill_ltb(
                 agent_id="agent-1",
                 turn=1,
@@ -672,7 +695,7 @@ class HierarchicalMemoryTests(unittest.TestCase):
                 stb_id=stb_id,
                 decision_id=decision_id,
                 fill_id=fill_id,
-                dimensions=incomplete_rewrite,
+                dimensions=_dimensions("initial"),
                 integration_evidence=_evidence(),
                 belief_summary="human log",
                 view_change="changed",
