@@ -780,20 +780,34 @@ class StbScopeAndAnalysisEvidenceContractTests(unittest.IsolatedAsyncioTestCase)
         self.assertIn("페르소나의 판단에 따라", retry)
         self.assertIn("지적되지 않은 다른 차원은 그대로 두세요", retry)
 
-    async def test_char_limit_error_reports_the_actual_length(self) -> None:
+    async def test_dimension_text_over_limit_is_accepted_without_retry(self) -> None:
+        # 글자수 한도는 프롬프트의 목표치일 뿐 검증에서 강제하지 않는다(2026-07-31).
+        # 한 턴에 outcome 3건이 동시에 도래하면 150자 안에 빠짐없이 요약하기가
+        # 어려워 라이브에서 반복적으로 이벤트를 중단시켰다. 초과해도 그대로
+        # 받아들여져 재시도가 발생하지 않아야 한다.
         over = _stb_dimensions("stb")
-        over["dim_2"] = "가" * 187  # dim_2 한도는 150자
+        over["dim_2"] = "가" * 187  # dim_2 한도(150자)를 넘긴 텍스트
         clean = _evidence(dim_1_support=["news:a"])
-        client = await self._run_stb_sequence(
-            [
-                {**over, "dimension_evidence": clean},
-                {**_stb_dimensions("stb"), "dimension_evidence": clean},
-            ]
+        client = _CaptureClient({**over, "dimension_evidence": clean})
+        result = await generate_short_term_belief(
+            {"agent_id": "agent-1", "news_depth": 1, "persona_prompt": "persona"},
+            event={
+                "event_id": "2026-02-27/AM",
+                "turn": 1,
+                "date": "2026-02-27",
+                "subturn": "am",
+            },
+            current_evidence={
+                "news": [{"evidence_id": "news:a", "title": "제목 a"}],
+                "depth2_search_results": [],
+                "community_claims": [],
+            },
+            allowed_evidence_ids={"news:a"},
+            client=client,
+            validation_attempts=1,
         )
-        retry = client.prompts[1]
-        self.assertIn("dim_2 exceeds the 150-character limit", retry)
-        self.assertIn("current=187", retry)
-        self.assertIn("한도 안으로 줄여", retry)
+        self.assertEqual(len(result["dim_2"]), 187)
+        self.assertEqual(len(client.prompts), 1)
 
     async def _run_ltb(self, client: Any) -> dict[str, Any]:
         return await update_long_term_belief(
@@ -1021,27 +1035,27 @@ class BeliefLimitAndRetryBudgetTests(unittest.IsolatedAsyncioTestCase):
             )
         return client
 
-    async def test_dimension_boundary_is_150_pass_151_fail(self) -> None:
+    async def test_dimension_length_is_not_enforced_at_or_over_150(self) -> None:
+        # 2026-07-31: 글자수는 프롬프트의 목표치일 뿐이다. 150자와 151자
+        # 모두 재시도 없이 그대로 통과해야 한다.
         evidence = _evidence()
-        ok = {**_stb_dimensions("stb"), "dim_2": "가" * 150}
-        client = _CaptureClient({**ok, "dimension_evidence": evidence})
-        result = await generate_short_term_belief(
-            {"agent_id": "a", "news_depth": 1, "persona_prompt": "p"},
-            event={"event_id": "e", "turn": 1, "date": "2026-02-27", "subturn": "am"},
-            current_evidence={
-                "news": [],
-                "depth2_search_results": [],
-                "community_claims": [],
-            },
-            allowed_evidence_ids=set(),
-            client=client,
-            validation_attempts=1,
-        )
-        self.assertEqual(len(result["dim_2"]), 150)
-
-        over = {**_stb_dimensions("stb"), "dim_2": "가" * 151}
-        failing = await self._stb_attempts({**over, "dimension_evidence": evidence})
-        self.assertIn("exceeds the 150-character limit (current=151)", failing.prompts[1])
+        for length in (150, 151):
+            ok = {**_stb_dimensions("stb"), "dim_2": "가" * length}
+            client = _CaptureClient({**ok, "dimension_evidence": evidence})
+            result = await generate_short_term_belief(
+                {"agent_id": "a", "news_depth": 1, "persona_prompt": "p"},
+                event={"event_id": "e", "turn": 1, "date": "2026-02-27", "subturn": "am"},
+                current_evidence={
+                    "news": [],
+                    "depth2_search_results": [],
+                    "community_claims": [],
+                },
+                allowed_evidence_ids=set(),
+                client=client,
+                validation_attempts=1,
+            )
+            self.assertEqual(len(result["dim_2"]), length)
+            self.assertEqual(len(client.prompts), 1)
 
     async def test_production_stages_retry_ten_times_before_failing(self) -> None:
         # 재시도 예산을 올려도 temperature/seed 스케줄 길이가 따라오지 않으면

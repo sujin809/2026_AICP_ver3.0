@@ -79,20 +79,17 @@ def _limits() -> dict[str, int]:
 
 
 def belief_dimensions(value: Mapping[str, Any], *, label: str = "belief") -> dict[str, str]:
+    # 글자수 한도는 프롬프트에 목표치로만 남기고 검증에서는 강제하지 않는다.
+    # 한 턴에 outcome 3건이 동시에 도래하면 150자 안에 빠짐없이 요약하기가
+    # 어려워 라이브에서 반복적으로 10회 소진되는 이벤트를 만들었다(2026-03-09
+    # 부근에서 여러 agent가 이 이유만으로 실행을 여러 차례 중단시켰다). 길이
+    # 초과는 내용의 신뢰도를 해치지 않으므로 재시도 없이 그대로 받아들인다.
     dimensions: dict[str, str] = {}
     for key in BELIEF_DIMENSION_KEYS:
         raw = value.get(key)
         if not isinstance(raw, str) or not raw.strip():
             raise BeliefValidationError(f"{label}.{key} must be a non-empty string")
-        text = raw.strip()
-        limit = int(config.BELIEF_LIMITS[key])
-        if len(text) > limit:
-            # 실제 길이를 함께 알려야 재시도가 "얼마나 줄여야 하는가"를 알 수 있다.
-            raise BeliefValidationError(
-                f"{label}.{key} exceeds the {limit}-character limit "
-                f"(current={len(text)})"
-            )
-        dimensions[key] = text
+        dimensions[key] = raw.strip()
     return dimensions
 
 

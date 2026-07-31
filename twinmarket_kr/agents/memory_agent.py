@@ -98,13 +98,11 @@ def _dimensions(value: Mapping[str, Any], *, label: str) -> dict[str, str]:
         raise ValueError(
             f"{label} must contain exactly {list(HIERARCHICAL_DIMENSION_KEYS)}"
         )
+    # 생성 경계(llm/belief.py belief_dimensions)와 같은 정책이다: 글자수
+    # 한도는 프롬프트의 목표치일 뿐 저장을 거부하는 근거로 쓰지 않는다.
     normalized: dict[str, str] = {}
     for key in HIERARCHICAL_DIMENSION_KEYS:
-        text = _required_text(value[key], label=f"{label}.{key}")
-        limit = int(config.BELIEF_LIMITS[key])
-        if len(text) > limit:
-            raise ValueError(f"{label}.{key} exceeds {limit} characters")
-        normalized[key] = text
+        normalized[key] = _required_text(value[key], label=f"{label}.{key}")
     return normalized
 
 

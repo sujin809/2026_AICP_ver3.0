@@ -68,7 +68,8 @@ dim_6(자기 투자 능력 평가)은 최근의 나의 판단들이 얼마나 �
 - 위 필수 key만 가진 JSON object 하나만 출력하세요. Markdown, 코드블록, 추가 key, 숨은 사고과정은 출력하지 마세요.
 - integration_evidence는 dim_1부터 dim_6까지 각각 support와 contradict 배열을 가져야 합니다.
 - 이번 체결 정보는 dim_6의 자기평가에 반드시 반영하지만 근거 ID는 아닙니다.
-- 새로 보이는 과거 가격 결과 ID는 dim_6에 정확히 한 번씩만 인용하세요. 어느 쪽에 넣을지는 dim_6 문장의 내용이 아니라 **그 거래 판단 자체**를 기준으로 이미 정해져 있습니다: 해당 결과의 action_aligned_markout가 양수면 support(판단이 맞았음), 음수면 contradict(판단이 틀렸음)입니다. dim_6에 "내 판단이 틀렸다"라고 쓰더라도 음수 결과는 contradict에 넣어야 합니다. 결과가 없으면 ID를 만들지 마세요. 가격 결과만으로 dim_1~dim_5의 관점을 자동으로 뒤집지 마세요.
+- 새로 보이는 과거 가격 결과 ID는 integration_evidence.dim_6의 support 또는 contradict 배열에 정확히 한 번씩만 넣으세요. 어느 쪽에 넣을지는 dim_6 문장의 내용이 아니라 **그 거래 판단 자체**를 기준으로 이미 정해져 있습니다: 해당 결과의 action_aligned_markout가 양수면 support(판단이 맞았음), 음수면 contradict(판단이 틀렸음)입니다. dim_6에 "내 판단이 틀렸다"라고 쓰더라도 음수 결과는 contradict에 넣어야 합니다. 결과가 없으면 ID를 만들지 마세요. 가격 결과만으로 dim_1~dim_5의 관점을 자동으로 뒤집지 마세요.
+- 이 ID는 배열에만 넣으면 충분합니다. dim_6 문장 안에 ID 원문을 그대로 옮겨 적지 마세요.
 - dim_1~dim_5의 근거 ID는 같은 차원의 오늘 Short-Term Belief에서 온 ID만 사용하고, support/contradict 관계도 그대로 유지하세요. dim_6도 같은 관계의 Short-Term Belief 근거와 위 가격 결과만 사용하세요. 차원을 옮기거나 새 ID를 만들지 마세요.
 - raw 뉴스·커뮤니티, 자유문장 과거 이유, 미래 가격 결과, 실제 개인수급 수치를 추가하거나 추정하지 마세요.
 
