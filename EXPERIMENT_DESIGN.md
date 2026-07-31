@@ -195,11 +195,20 @@ STB와 LTB는 시간 역할만 다르고 아래 스키마와 글자 제한은 �
 | 차원 | canonical 의미 | 현재 제한 | STB에서의 역할 | LTB에서의 역할 |
 | --- | --- | ---: | --- | --- |
 | `dim_1` | 향후 약 1개월 삼성전자 주가 방향 전망 | 150자 | 현재 event 정보가 중기 방향에 주는 단기 시사점 | 과거 관점과 현재 시사점을 재귀 통합한 다음 event용 전망 |
-| `dim_2` | 현재 valuation이 싸다·비싸다·적정하다는 관점과 근거 | 100자 | 현재 정보가 valuation에 주는 시사점 | 누적 valuation 관점 |
-| `dim_3` | 금리·환율·경기·반도체 업황 등 거시·산업 환경 판단 | 100자 | 현재 정보가 환경 판단에 주는 시사점 | 누적 거시·산업 판단 |
-| `dim_4` | 삼성전자를 둘러싼 시장 심리와 투자자 분위기 | 100자 | 현재 뉴스·허용 community에서 감지한 심리 | 시간에 걸쳐 통합한 심리 판단 |
-| `dim_5` | 뉴스·community를 접하고 얻은 개인적 해석과 깨달음 | 100자 | 이번 event 정보의 persona-conditioned 해석 | 누적 정보 해석 원칙과 관점 |
-| `dim_6` | 자신의 최근 투자 판단·위험관리 능력에 대한 성찰 | 100자 | 과거 성과 없이 현재 정보 한계와 주의점만 표현 | 현재 fill과 도래한 next-turn/H1/H5 결과를 반영한 누적 자기평가 |
+| `dim_2` | 현재 valuation이 싸다·비싸다·적정하다는 관점과 근거 | 150자 | 현재 정보가 valuation에 주는 시사점 | 누적 valuation 관점 |
+| `dim_3` | 금리·환율·경기·반도체 업황 등 거시·산업 환경 판단 | 150자 | 현재 정보가 환경 판단에 주는 시사점 | 누적 거시·산업 판단 |
+| `dim_4` | 삼성전자를 둘러싼 시장 심리와 투자자 분위기 | 150자 | 현재 뉴스·허용 community에서 감지한 심리 | 시간에 걸쳐 통합한 심리 판단 |
+| `dim_5` | 뉴스·community를 접하고 얻은 개인적 해석과 깨달음 | 150자 | 이번 event 정보의 persona-conditioned 해석 | 누적 정보 해석 원칙과 관점 |
+| `dim_6` | 자신의 최근 투자 판단·위험관리 능력에 대한 성찰 | 150자 | 과거 성과 없이 현재 정보 한계와 주의점만 표현 | 현재 fill과 도래한 next-turn/H1/H5 결과를 반영한 누적 자기평가 |
+
+한도의 정본은 `config.BELIEF_LIMITS`(전 차원 150자)이고 봉인·검증이 모두 이를
+읽는다. STB `dim_6`는 `정보 한계:`와 `주의점:` 두 표기를 반드시 포함해야 하며
+(validator 강제), 이는 과거 성과 회상 없이 현재 정보의 한계만 쓰게 하는 장치다.
+LTB 재서술 규칙은 "여섯 차원 전부가 직전 LTB와 verbatim 동일하면 거부"뿐이다.
+차원별 문장 유지는 정당하다 — 관점이 안 변한 차원에 새 표현을 강제하면 임베딩
+기반 deviation 측정에 억지 패러프레이즈 노이즈가 깔리기 때문이다. 이 규칙은
+생성 경계(`llm/belief.py`)와 저장 경계(`memory_agent.save_post_fill_ltb`)에
+동일하게 있고, 한쪽만 고치면 유료 실행이 저장 단계에서 죽는다.
 
 `dim_1`은 STB에서도 당일 예측으로 축소하지 않는다. “short-term”은 belief의
 입력 수명과 갱신 역할이 짧다는 뜻이며, 차원 자체의 전망 horizon은 약 1개월로
@@ -326,6 +335,23 @@ reader별로 재현할 수 있어야 한다.
 적용한다. full-body 노출이 하나도 없는 agent에게는 community interpretation
 단계를 실행하지 않는다. 커뮤니티 글은 검증되지 않은 투자자 발언이며 실제 거래
 사실은 canonical fill ledger만 신뢰한다.
+
+### 8.5 claim 인용 계약 (번호 기반, 2026-07-30~)
+
+claim의 `supporting_quote`는 모델의 자유 인용이 아니라 번호 참조로 만든다.
+
+1. full-body로 노출된 글의 제목과 본문 문장에 `[인용 N]` 번호를 부여해
+   quotable registry를 만든다. 문장 분리는 `.!?…` 종결부호와 줄바꿈 기준이다.
+2. 모델은 `supporting_quote_ref`(정수 N)만 출력한다. 인용문 텍스트를 직접
+   쓰지 않는다.
+3. `materialize_claim_quotes`가 N을 registry의 원문 문장으로 치환해
+   `supporting_quote`로 저장한다. 인용의 축자 일치가 **구조적으로** 보장되며,
+   과거 자유 인용 방식에서 반복되던 공백 변형·짜깁기·오귀속 거부가 사라진다.
+4. 해당 문장의 출처 노출 ID가 `source_exposure_ids`에 없으면 자동 보충한다.
+5. validator 버전은 `community-thinking-validator-v4`다.
+
+연구자는 저장된 `supporting_quote_ref`와 `supporting_quote`를 원문과 대조해
+에이전트가 실제로 무엇을 읽고 인용했는지 사후 검증할 수 있다.
 
 ## 9. LLM 호출 정책
 
@@ -529,6 +555,14 @@ caller가 date, depth, 기사 배열을 임의로 넘겨 registry를 우회할 �
 `event_id -> sealed slot -> payload hash -> depth projection -> exposure ID`가
 한 방향으로만 결정된다. fake 조건에서도 이 흐름은 같고 agent-visible
 projection에서 fake metadata만 완전히 제거한다.
+
+D2 검색의 후보 매칭은 agent keyword를 공백 단위 토큰으로 나눠 제목(2배
+가중)·요약의 부분 일치로 채점하고, 0점 후보는 버린 뒤 상위 5건만 반환한다.
+2026-07-31 이전 코드는 키워드 구 전체의 완전 일치를 요구해 라이브 검색이
+항상 0건을 반환했다(에러 없는 조용한 오작동). belief에 유입되는 것은 검색으로
+회수된 **기사**(evidence `kind=depth2_recent_search`)뿐이다. pre/post-search
+사고 산출물(`depth2_flow`의 step2·step4)은 감사·분석용 로그 전용이며 어떤
+프롬프트에도 재유입되지 않는다.
 
 ## 16. AM/PM state machine과 데이터 경계
 

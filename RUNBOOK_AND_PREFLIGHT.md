@@ -1,13 +1,21 @@
 # 실행·Preflight·복구 Runbook
 
-> 현재 판정: **무과금 P0 PASS / live canary·45일 본실험 NO-GO (별도 유료 승인 필요)**
+> 현재 판정 (2026-07-31): **45일 본실험 GO-ready (유료 승인 대기)**
 >
 > `05 -> simulation.py`에는 sealed StudySpec, atomic checkpoint/resume,
 > response journal, canonical validator와 유료 호출 gate가 연결되어 있다.
-> 현 code·prompt·persona projection으로 StudySpec을 다시 봉인하고 전체
-> 무과금 회귀, sealed profile 검증, 1 agent/45거래일 OFF/ON 실제 중단·재개
-> offline 검증을 완료했다. 승인된
-> live canary와 본실험은 수행하지 않았다.
+> 완료된 검증:
+> - reasoning-off live canary (Qwen3.5 Flash, provider=alibaba 고정,
+>   전 호출 `reasoning_tokens=0`)
+> - 유료 2일 검증 v8 완주 (100 agent, 400/400 turn, 소진 0, 최대 재시도
+>   3/10, $1.87) 및 `99_validate` `segment_valid_not_publication_ready` 통과.
+>   보존본: `outputs/logs/live_2day_v8_20260731/`
+> - 무과금 45일 전 구간 E2E 완주 (D2 agent 포함 `--max-agents 7`,
+>   90/90 event, outcome ledger finalize, h5·right-censoring 검증)
+> - `kill -9` 중단 후 동일 인자 resume 복구와 journal 재생(재과금 없음) 실증
+>
+> 봉인 기준: `baseline_commit 6ecd2c9`, `prompt_bundle_sha256 9cb9c07a…`.
+> 45일 본실험(ON/OFF 2 arm, 예상 $40~55)은 사용자 승인 후에만 시작한다.
 
 이 문서는 앞으로 사용할 단일 번호형 파이프라인의 운영 절차다. 정책과 상세
 아키텍처는 각각 [`EXPERIMENT_DESIGN.md`](EXPERIMENT_DESIGN.md)와
@@ -34,6 +42,19 @@
 승인 문장에는 최소 run ID, 조건, 기간, agent 수, 예상 비용 상한이 있어야 한다.
 “테스트해 봐”를 유료 실행 승인으로 해석하지 않는다.
 
+### 게이트 순서 (필수)
+
+코드·프롬프트 변경 후에는 반드시 이 순서로 통과한 뒤에만 유료 실행한다.
+
+1. 전체 테스트 (`.venv/bin/python -m unittest discover -s tests`)
+2. 오프라인 E2E — **`--max-agents 7` 이상**으로 실행할 것. A001~A004에는
+   depth 2 agent가 없어(첫 D2는 A007) 4명 코호트로는 D2 검색 경로가 실행조차
+   되지 않는다. D2 검색이 죽어 있던 결함을 4명 E2E가 잡지 못한 원인이다.
+3. 유료 실행 (승인 필요)
+
+순서를 건너뛰어 유료 실행이 죽은 사례가 2건 있다(NameError 미검출,
+저장 경계 미러 미수정). compileall과 단위 테스트만으로는 잡히지 않았다.
+
 ## 2. 현재 하드 스톱
 
 현재 `05 --help`에는 명시적 `--run-dir`, `--resume`, sealed
@@ -48,14 +69,13 @@ production `05`는 legacy CSV나 JSON split을 자동 선택하지 않고 sealed
 없거나 hash가 다르면 중단한다. RN `09/12`와 별도 checkpoint runner는
 제거됐다.
 
-무과금 P0에서 현 profile 재봉인, 전체 회귀, profile validator, 1 agent/45거래일
-OFF/ON 실제 중단·재개 offline 검증과 report fixture 시각 검수는 완료했다. 현재 실제 하드 스톱은
-다음뿐이다.
+무과금 P0에서 현 profile 재봉인, 전체 회귀, profile validator, 45거래일
+OFF/ON 실제 중단·재개 offline 검증과 report fixture 시각 검수는 완료했다.
+live reasoning-off canary와 유료 2일 검증(v8)도 승인 하에 완료했다
+(문서 상단 판정 참조). 현재 실제 하드 스톱은 다음뿐이다.
 
-1. live reasoning-off telemetry canary는 유료 호출이며 사용자 승인 없이
-   실행할 수 없다.
-2. 45거래일 OFF/ON 본실험은 별도 비용·기간·run ID 승인 없이는 실행할 수 없다.
-3. live 실행 전에는 의도한 diff를 freeze하고 clean code/prompt/input 기록을
+1. 45거래일 OFF/ON 본실험은 별도 비용·기간·run ID 승인 없이는 실행할 수 없다.
+2. live 실행 전에는 의도한 diff를 freeze하고 clean code/prompt/input 기록을
    승인 run record에 남겨야 한다. 현재 작업의 무과금 검증은 이를 대체하지 않는다.
 
 profile hash 검증을 우회하거나 `study_spec.json`의 hash 문자열만 손으로
