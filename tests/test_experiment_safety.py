@@ -390,3 +390,47 @@ class ExperimentBaseSafetyTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_no_undefined_names_in_runtime_modules() -> None:
+    """미정의 이름은 compileall이 못 잡고 유료 실행에서야 터진다.
+
+    시드 원복 중 남은 ``attempt_salt`` 참조가 전체 테스트(200 passed)와
+    compileall을 모두 통과한 뒤, 유료 실행 첫 턴에서 100 agent NameError로
+    터졌다. 함수 안에서 전역으로 해석되는 이름이 모듈에도 builtins에도
+    없으면 실행 시 NameError이므로 여기서 막는다.
+    """
+
+    import builtins
+    import symtable
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    failures: list[str] = []
+    for path in sorted((root / "twinmarket_kr").rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        top = symtable.symtable(source, str(path), "exec")
+        module_names = {
+            symbol.get_name()
+            for symbol in top.get_symbols()
+            if symbol.is_assigned() or symbol.is_imported() or symbol.is_namespace()
+        }
+
+        def walk(table: symtable.SymbolTable) -> None:
+            if table.get_type() == "function":
+                for symbol in table.get_symbols():
+                    name = symbol.get_name()
+                    if (
+                        symbol.is_global()
+                        and symbol.is_referenced()
+                        and name not in module_names
+                        and not hasattr(builtins, name)
+                    ):
+                        failures.append(
+                            f"{path.relative_to(root)} {table.get_name()}(): {name}"
+                        )
+            for child in table.get_children():
+                walk(child)
+
+        walk(top)
+    assert not failures, "미정의 이름:\n" + "\n".join(sorted(set(failures)))

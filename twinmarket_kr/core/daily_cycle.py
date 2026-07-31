@@ -198,7 +198,7 @@ async def run_agent_turn(
             agent,
             today_context["news_context"],
             client=client,
-            seed=stable_llm_seed(random_seed, agent_id, turn, "depth2_pre_search", attempt_salt),
+            seed=stable_llm_seed(random_seed, agent_id, turn, "depth2_pre_search"),
         )
         search_results = []
         post_search = {
@@ -237,7 +237,7 @@ async def run_agent_turn(
                 search_results,
                 pre_search,
                 client=client,
-                seed=stable_llm_seed(random_seed, agent_id, turn, "depth2_post_search", attempt_salt),
+                seed=stable_llm_seed(random_seed, agent_id, turn, "depth2_post_search"),
             )
         depth2_flow = {
             "step1_base": {
@@ -274,7 +274,7 @@ async def run_agent_turn(
             delivery_turn=turn,
             delivery_date=date,
             client=client,
-            seed=stable_llm_seed(random_seed, agent_id, turn, "community_thinking", attempt_salt),
+            seed=stable_llm_seed(random_seed, agent_id, turn, "community_thinking"),
         )
         if db_write_lock is not None:
             async with db_write_lock:
@@ -314,7 +314,7 @@ async def run_agent_turn(
         current_evidence=current_evidence,
         allowed_evidence_ids=allowed_evidence_ids,
         client=client,
-        seed=stable_llm_seed(random_seed, agent_id, turn, "short_term_belief", attempt_salt),
+        seed=stable_llm_seed(random_seed, agent_id, turn, "short_term_belief"),
     )
     current_stb_dimensions = belief_dimensions(
         current_stb,
@@ -365,7 +365,7 @@ async def run_agent_turn(
         portfolio_summary=today_context["portfolio_summary"],
         execution_state=constraints,
         client=client,
-        seed=stable_llm_seed(random_seed, agent_id, turn, "market_analysis", attempt_salt),
+        seed=stable_llm_seed(random_seed, agent_id, turn, "market_analysis"),
     )
     if db_write_lock is not None:
         async with db_write_lock:
@@ -397,7 +397,7 @@ async def run_agent_turn(
         constraints,
         allow_hold=decision_space != "buy_sell_only",
         client=client,
-        seed=stable_llm_seed(random_seed, agent_id, turn, "trading_decision", attempt_salt),
+        seed=stable_llm_seed(random_seed, agent_id, turn, "trading_decision"),
     )
     if db_write_lock is not None:
         async with db_write_lock:
