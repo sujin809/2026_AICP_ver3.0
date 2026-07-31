@@ -970,17 +970,25 @@ class NewsAgent:
                 and first_visible_at <= sealed_end
             ):
                 candidates.append(row)
+        # 모델이 만드는 검색어는 "삼성전자 HBM 수주" 같은 구(phrase)라서
+        # 전체 문자열 일치로 채점하면 사실상 아무 기사도 매칭되지 않는다.
+        # 라이브 2일 실행에서 검색 60회가 전부 0건을 반환해 depth 2의 회수
+        # 경로가 통째로 죽어 있었다. 공백 단위 토큰으로 나눠 채점한다.
+        search_tokens = {
+            token
+            for keyword in normalized_keywords
+            for token in keyword.split()
+        }
         scored: list[tuple[float, dict[str, Any]]] = []
         for row in candidates:
             search_summary = row.get("search_summary") or row.get("summary", "")
-            haystack = f"{row['title']} {search_summary}"
             title_hits = sum(
-                str(row["title"]).count(keyword)
-                for keyword in normalized_keywords
+                str(row["title"]).count(token)
+                for token in search_tokens
             )
             body_hits = sum(
-                str(search_summary).count(keyword)
-                for keyword in normalized_keywords
+                str(search_summary).count(token)
+                for token in search_tokens
             )
             score = title_hits * 2.0 + body_hits
             if score > 0:
