@@ -68,6 +68,7 @@ Step 1의 방향과 Step 2의 수량을 종합하여 최종 action, requested_qu
 - action이 "hold", "", null이면 실패입니다.
 - requested_quantity가 0, null, 음수, 문자열이면 실패입니다.
 - JSON 외 설명, 마크다운, 코드블록을 출력하면 실패입니다.
+- 위 필수 key만 가진 JSON object 하나만 출력하세요. 추가 key, 숨은 사고과정은 출력하지 마세요.
 
 출력 예시:
 {

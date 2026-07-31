@@ -300,10 +300,16 @@ async def _generate_hierarchical_belief(
                 errors.append("ltb_must_not_copy_all_six_dimensions_verbatim")
         due_ids = required_dim_6_outcome_ids or set()
         if due_ids and evidence:
+            # _normalize_dimension_evidence는 구조가 깨진 차원을 normalized에
+            # 넣지 않고 건너뛴다. dim_1~dim_5만 정상이면 evidence는 참이지만
+            # dim_6 키가 없어서 직접 첨자 접근은 KeyError를 낸다. 그 예외는
+            # 재시도 루프 밖으로 전파돼 재시도 없이 에이전트를 죽인다.
+            # (윗줄 must_preserve_evidence_relation 검사와 같은 방어를 쓴다.)
+            dim_6_evidence = evidence.get("dim_6", {})
             cited = [
                 evidence_id
                 for relation in BELIEF_EVIDENCE_RELATIONS
-                for evidence_id in evidence["dim_6"][relation]
+                for evidence_id in dim_6_evidence.get(relation, [])
                 if evidence_id in due_ids
             ]
             if len(cited) != len(set(cited)) or set(cited) != due_ids:
