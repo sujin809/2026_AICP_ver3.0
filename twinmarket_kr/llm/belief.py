@@ -145,10 +145,28 @@ def _normalize_dimension_evidence(
             ids = [item.strip() for item in rows]
             if len(ids) != len(set(ids)):
                 errors.append(f"{field}.{dimension}.{relation}:duplicate_ids")
-            unknown_ids = set(ids) - set(allowed_ids_by_dimension.get(dimension, set()))
+            allowed_pool = set(allowed_ids_by_dimension.get(dimension, set()))
+            unknown_ids = set(ids) - allowed_pool
             if unknown_ids:
+                # 라이브에서 뉴스 ID의 카테고리 접두어(예: news_..._섹터_<hash>를
+                # news_..._종목_<hash>로)만 착각해 소진되는 사례가 반복됐다.
+                # 같은 해시 접미어를 가진 실제 ID가 registry에 있으면 그대로
+                # 알려줘 모델이 스스로 대조하지 않아도 되게 한다.
+                suggestions = {
+                    bad_id: sorted(
+                        candidate
+                        for candidate in allowed_pool
+                        if candidate != bad_id
+                        and candidate.rsplit("_", 1)[-1]
+                        == bad_id.rsplit("_", 1)[-1]
+                    )
+                    for bad_id in unknown_ids
+                }
+                suggestions = {k: v for k, v in suggestions.items() if v}
+                hint = f":did_you_mean:{suggestions}" if suggestions else ""
                 errors.append(
-                    f"{field}.{dimension}.{relation}:unknown_ids:{sorted(unknown_ids)}"
+                    f"{field}.{dimension}.{relation}:unknown_ids:"
+                    f"{sorted(unknown_ids)}{hint}"
                 )
             normalized[dimension][relation] = ids
         support = set(normalized[dimension].get("support", []))

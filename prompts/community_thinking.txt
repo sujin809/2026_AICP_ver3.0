@@ -41,7 +41,7 @@
 - observed_sentiment: "optimistic", "pessimistic", "mixed", "overheated", "anxious", "uncertain" 중 하나.
 - claims: 0개 이상의 claim object 배열. 각 object는 아래 네 key만 가집니다.
   - claim_text: 커뮤니티에서 관찰한 투자 관련 주장 또는 심리 신호를 짧게 서술한 문자열.
-  - claim_stance: "bullish", "bearish", "neutral", "uncertain" 중 하나.
+  - claim_stance: "bullish", "bearish", "neutral", "uncertain" 중 하나. observed_sentiment의 값("mixed", "anxious" 등)을 여기에 쓰지 마세요. 근거가 엇갈리면 neutral 또는 uncertain을 쓰세요.
   - source_exposure_ids: 위 claim의 근거가 실제 들어 있는 source_exposure_id의 중복 없는 문자열 배열.
   - supporting_quote_ref: 위 게시글에 [인용 N]으로 표시된 번호 중 하나(정수). 그 번호의 문장이 주장의 근거입니다.
 - agreement_disagreement: 공감한 점과 반대한 점을 함께 짧게 정리한 문자열.

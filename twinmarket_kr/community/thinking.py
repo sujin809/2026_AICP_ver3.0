@@ -213,6 +213,10 @@ async def community_thinking(
                 "가진 JSON object를 출력하세요. 각 claim의 supporting_quote_ref는 "
                 "위 게시글에 [인용 N]으로 표시된 번호 중 하나의 정수입니다. "
                 "문장을 직접 쓰지 말고 번호만 고르세요."
+                " claim_stance는 반드시 bullish, bearish, neutral, uncertain 중"
+                " 하나입니다. mixed, anxious, optimistic 같은 observed_sentiment의"
+                " 값을 claim_stance에 쓰지 마세요. 근거가 엇갈리는 주장이면"
+                " neutral 또는 uncertain을 쓰세요."
             ),
         )
     raise CommunityValidationError(
@@ -469,7 +473,15 @@ def _community_thinking_errors(
             "neutral",
             "uncertain",
         }:
-            errors.append(f"claims[{index}].claim_stance:invalid")
+            # 모델이 observed_sentiment의 어휘("mixed", "anxious" 등)를 인접한
+            # claim_stance에 그대로 옮겨 쓰는 실수를 라이브에서 반복했다.
+            # 실제로 받은 값과 허용 목록을 error 문자열 자체에 남겨, 재시도가
+            # schema_hint 없이도 무엇이 잘못됐는지 바로 알 수 있게 한다.
+            errors.append(
+                f"claims[{index}].claim_stance:invalid:"
+                f"got={claim['claim_stance']!r}:"
+                "allowed=['bullish','bearish','neutral','uncertain']"
+            )
         source_ids = claim["source_exposure_ids"]
         if (
             not isinstance(source_ids, list)
