@@ -281,9 +281,17 @@ class SimulationOutcomeLifecycleTests(unittest.TestCase):
         self.assertEqual(statuses, {"matured": 1, "right_censored": 5})
         self.assertEqual(consumption_count, 1)
 
-    def test_negative_action_aligned_markout_requires_contradict_relation(
+    def test_agent_may_choose_either_relation_for_a_negative_markout(
         self,
     ) -> None:
+        """dim_6은 에이전트의 자기평가이므로 관계를 강제하지 않는다.
+
+        예전에는 markout 부호로 support/contradict를 확정하고 어긋나면
+        저장을 거부했다. 라이브에서 이 규칙이 실행을 죽인 지배적 원인이었고
+        (v4 소진 24건 중 22건), 강제 라벨 자체도 부분 매도·horizon 불일치·
+        노이즈 수준 변화율에서 항상 옳지는 않았다. 객관적 부호는
+        simulation_trade_outcomes에 그대로 남아 사후 대조가 가능하다.
+        """
         self.schedule = _two_event_schedule(pm_price=90.0)
         self.db_path = Path(self.tempdir.name) / "negative-markout.sqlite"
         self.memory = MemoryAgent(
@@ -307,20 +315,11 @@ class SimulationOutcomeLifecycleTests(unittest.TestCase):
         )
         self.assertAlmostEqual(eligible[0]["action_aligned_markout"], -0.1)
 
-        with self.assertRaisesRegex(
-            ValueError,
-            "relation must match its action_aligned_markout",
-        ):
-            self._record_event(
-                turn=2,
-                outcome_ids=list(matured),
-                outcome_relation="support",
-            )
-
+        # markout이 음수여도 에이전트가 support로 해석하면 그대로 저장된다.
         self._record_event(
             turn=2,
             outcome_ids=list(matured),
-            outcome_relation="contradict",
+            outcome_relation="support",
         )
         self.assertEqual(
             self.memory.eligible_outcomes(

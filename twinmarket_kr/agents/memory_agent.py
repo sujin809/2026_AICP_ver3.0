@@ -1012,6 +1012,23 @@ class MemoryAgent:
             entry_price = float(row["entry_price"])
             mark_price = float(row["mark_price"])
             direction = 1.0 if entry_action == "buy" else -1.0
+            price_change_pct = (mark_price - entry_price) / entry_price * 100.0
+            # 부분 매도인지 전량 청산인지, 매수 뒤 잔여 현금이 있었는지는
+            # 이 결과를 어떻게 읽어야 하는지에 결정적이다. 예전에는 체결
+            # 수량과 잔여 포지션이 payload에 없어서, 모델이 264주 중 100주를
+            # 판 것과 전량 청산을 구분할 수 없었다.
+            entry_quantity = int(row["entry_quantity"])
+            try:
+                pre_portfolio = json.loads(
+                    str(row["entry_pre_portfolio_json"]) or "{}"
+                )
+                post_portfolio = json.loads(
+                    str(row["entry_post_portfolio_json"]) or "{}"
+                )
+            except (TypeError, ValueError):
+                pre_portfolio, post_portfolio = {}, {}
+            position_before = pre_portfolio.get("quantity")
+            position_after = post_portfolio.get("quantity")
             eligible.append(
                 {
                     "outcome_id": outcome_id,
@@ -1021,6 +1038,13 @@ class MemoryAgent:
                     "observed_event_id": str(row["observed_event_id"]),
                     "entry_action": entry_action,
                     "entry_price": entry_price,
+                    "entry_quantity": entry_quantity,
+                    "position_before_trade": position_before,
+                    "position_after_trade": position_after,
+                    "full_exit": (
+                        entry_action == "sell" and position_after == 0
+                    ),
+                    "price_change_pct_since_trade": price_change_pct,
                     "action_aligned_markout": (
                         direction * (mark_price - entry_price) / entry_price
                     ),
@@ -2042,6 +2066,9 @@ class MemoryAgent:
             """
             SELECT outcome.*, fill.agent_id, fill.action AS entry_action,
                    fill.executed_price AS entry_price,
+                   fill.filled_quantity AS entry_quantity,
+                   fill.pre_portfolio_json AS entry_pre_portfolio_json,
+                   fill.post_portfolio_json AS entry_post_portfolio_json,
                    fill.source_ltb_id, fill.source_stb_id
             FROM simulation_trade_outcomes AS outcome
             JOIN simulation_fills AS fill ON fill.fill_id = outcome.fill_id
@@ -2117,13 +2144,15 @@ class MemoryAgent:
         integration_evidence: Mapping[str, Any],
         due_rows: list[sqlite3.Row] | tuple[sqlite3.Row, ...] = (),
     ) -> set[str]:
-        """Keep STB polarity exact and bind outcome polarity to its markout.
+        """Keep STB polarity exact; let the agent judge its own outcomes.
 
         The current STB remains the only ordinary evidence source for LTB_t.
         Citing an STB evidence ID is optional, but moving a cited ID to a
         different dimension or from support to contradict (or vice versa) is
         not.  Matured outcome IDs are an explicit exception: they belong only
-        to dim_6, and non-zero action-aligned markouts determine their relation.
+        to dim_6, and the agent decides their relation.  dim_6 is the agent's
+        cumulative self-assessment, so how it reads its own results is an
+        observation target rather than something to overwrite.
         """
 
         stored_stb_evidence = _dimension_evidence(
@@ -2145,22 +2174,11 @@ class MemoryAgent:
                             raise ValueError(
                                 "matured price outcomes may affect only LTB dim_6"
                             )
-                        entry_action = str(due_row["entry_action"])
-                        direction = 1.0 if entry_action == "buy" else -1.0
-                        markout = direction * (
-                            float(due_row["mark_price"])
-                            - float(due_row["entry_price"])
-                        ) / float(due_row["entry_price"])
-                        required_relation = outcome_evidence_relation(markout)
-                        if (
-                            required_relation is not None
-                            and relation != required_relation
-                        ):
-                            raise ValueError(
-                                "matured price outcome relation must match its "
-                                "action_aligned_markout: "
-                                f"{evidence_id} requires {required_relation}"
-                            )
+                        # 생성 경계(llm/belief.py)와 같은 정책이다: 가격 결과의
+                        # support/contradict는 에이전트의 자기평가이므로
+                        # markout 부호로 강제하지 않는다. 객관적 부호는
+                        # simulation_trade_outcomes에 그대로 남아 사후 대조가
+                        # 가능하다. dim_6 전용이라는 제약만 유지한다.
                         supplied_outcomes.add(evidence_id)
                         continue
                     if evidence_id in stored_stb_evidence[dimension][relation]:

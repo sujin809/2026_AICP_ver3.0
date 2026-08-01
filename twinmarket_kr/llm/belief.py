@@ -164,6 +164,14 @@ def _normalize_dimension_evidence(
                 }
                 suggestions = {k: v for k, v in suggestions.items() if v}
                 hint = f":did_you_mean:{suggestions}" if suggestions else ""
+                # 접두어 착각이 아니라 아예 없는 ID를 지어낸 경우(예: 존재하지
+                # 않는 turn 번호)에는 근접 후보가 없어 위 힌트가 비어 있다.
+                # 허용 목록이 짧으면 그대로 나열해 무엇을 골라야 하는지
+                # 모호함 없이 알려준다. 라이브에서 이 유형이 소진까지 간 적이
+                # 있고, 그때 오류는 "없는 ID"라고만 말하고 있는 ID는 알려주지
+                # 않았다.
+                if not suggestions and 0 < len(allowed_pool) <= 12:
+                    hint = f":allowed={sorted(allowed_pool)}"
                 errors.append(
                     f"{field}.{dimension}.{relation}:unknown_ids:"
                     f"{sorted(unknown_ids)}{hint}"
@@ -451,16 +459,16 @@ async def _generate_hierarchical_belief(
                 )
                 # 가격 결과의 support/contradict는 dim_6 문장이 아니라 원래
                 # 거래 판단 기준으로 강제된다. 라이브에서 모델이 손실 결과를
-                # "내 판단이 틀렸다는 문장을 지지한다"고 읽어 support에 넣는
-                # 실수를 10회 내내 반복해 6 agent가 소진됐다.
+                # 방향은 더 이상 강제하지 않는다. 남은 요구사항은 "빠짐없이,
+                # 각각 한 번만"이라는 완전성뿐이므로 그것만 안내한다.
                 + (
-                    " 가격 결과 ID의 방향은 dim_6 문장 내용과 무관하게"
-                    " 정해져 있습니다: action_aligned_markout가 양수면 support,"
-                    " 음수면 contradict에 정확히 한 번씩 넣으세요."
                     " 입력에 제공된 가격 결과 ID 전부를 빠짐없이, 각각 한 번만"
-                    " 인용해야 합니다. every_due_outcome 오류에 missing이 있으면"
-                    " 그 ID를 추가하고, duplicated가 있으면 중복분을 하나만"
-                    " 남기세요."
+                    " dim_6의 support 또는 contradict에 넣어야 합니다."
+                    " 어느 쪽에 넣을지는 당신의 판단입니다."
+                    " every_due_outcome 오류에 missing이 있으면 그 ID를 추가하고,"
+                    " duplicated가 있으면 중복분을 하나만 남기세요."
+                    " unknown_ids 오류에 allowed 목록이 있으면 그 안의 ID만"
+                    " 사용하고, 목록에 없는 ID는 지어내지 마세요."
                     if required_dim_6_outcome_ids
                     else ""
                 )
@@ -614,18 +622,32 @@ async def update_long_term_belief(
         }
         for dimension in BELIEF_DIMENSION_KEYS
     }
+    # 가격 결과의 support/contradict는 더 이상 강제하지 않는다.
+    #
+    # 예전에는 markout 부호로 관계를 확정해 모델이 그 값을 맞히도록 요구했다.
+    # 라이브에서 이 규칙이 실행을 죽인 유일한 지배적 원인이었다(v4 소진 24건
+    # 중 22건). 다른 검증 오류는 모델이 2~3회 재시도로 스스로 회복하는데,
+    # 이 규칙만은 "모델이 동의하지 않는 외부 정답"이라 10회 내내 자기 직관으로
+    # 돌아갔다. 특히 매도 후 하락(=판 물량 기준으로는 이득)을 손실로 읽는
+    # 오분류가 반복됐다.
+    #
+    # 게다가 강제 라벨 자체가 항상 옳지도 않다: 같은 fill이 horizon에 따라
+    # 정반대 라벨을 받고(실측 200건 중 100건), 부분 매도는 잔여 포지션 손익을
+    # 무시하며, epsilon이 1e-12라 0.01% 움직임도 "판단이 맞았음"이 된다.
+    #
+    # dim_6는 에이전트의 누적 자기평가, 즉 기억이다. 자기 성과를 어떻게
+    # 해석하는지가 관측 대상이므로 판단을 모델에게 돌려준다. 객관적 사실인
+    # action_aligned_markout은 simulation_trade_outcomes에 그대로 남으므로,
+    # 연구자는 사후에 "에이전트가 자기 성패를 얼마나 정확히 인식했는가"를
+    # 두 값의 비교로 측정할 수 있다.
     for outcome in outcomes:
         outcome_id = str(outcome["outcome_id"]).strip()
         try:
-            relation = outcome_evidence_relation(
-                outcome.get("action_aligned_markout")
-            )
+            outcome_evidence_relation(outcome.get("action_aligned_markout"))
         except OutcomeScheduleError as exc:
             raise BeliefValidationError(
                 f"{outcome_id} has invalid action_aligned_markout"
             ) from exc
-        if relation is not None:
-            fixed_relations_by_dimension["dim_6"][relation].add(outcome_id)
     payload = {
         "schema_version": "simulation-post-fill-ltb-input-v1",
         "persona": {

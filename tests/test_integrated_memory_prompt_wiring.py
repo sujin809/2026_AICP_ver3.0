@@ -671,12 +671,14 @@ class StbScopeAndAnalysisEvidenceContractTests(unittest.IsolatedAsyncioTestCase)
         # LTB는 STB와 달리 실제 체결과 도래한 결과 기반 자기평가를 유지해야 한다.
         self.assertIn("최근 나의 투자 판단들을 돌아본 자기 평가", instructions)
         self.assertIn("관찰 시점 도래 과거 체결의 가격 결과", instructions)
-        # 가격 결과의 support/contradict 방향 규칙이 프롬프트에 명시돼야 한다.
-        # validator가 markout 부호로 강제하는데 프롬프트가 침묵하면, 모델이
-        # 손실 결과를 "판단이 틀렸다는 문장을 지지"로 읽어 support에 넣는
-        # 의미론적 충돌로 예산을 소진한다(라이브에서 6 agent 소진 관측).
-        self.assertIn("action_aligned_markout가 양수면 support", instructions)
-        self.assertIn("음수면 contradict", instructions)
+        # 방향은 더 이상 강제하지 않는다. 대신 매수/매도의 손익 비대칭을
+        # 설명해 에이전트가 스스로 판단할 맥락을 준다. 강제하던 시절에는
+        # 모델이 매도 성공(가격 하락)을 실패로 읽는 오분류를 10회 내내
+        # 반복해 실행을 죽였다(v4 소진 24건 중 22건).
+        self.assertIn("어느 쪽에 넣을지는 **당신이 판단합니다**", instructions)
+        self.assertIn("매도한 뒤 가격이 내렸다", instructions)
+        self.assertIn("부분 매도", instructions)
+        self.assertNotIn("action_aligned_markout가 양수면 support", instructions)
         # STB dim_6 전용 형식 요구는 LTB 지시문으로 번지지 않는다. 다만 STB의
         # dim_6 문자열 자체는 current_stb payload로 정상 전달된다.
         self.assertNotIn("정보 한계:", instructions)
