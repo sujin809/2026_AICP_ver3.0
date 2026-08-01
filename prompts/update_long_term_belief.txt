@@ -26,6 +26,7 @@ Belief는 당신이 삼성전자에 대해 지속적으로 유지하고 수정�
   - price_change_pct_since_trade: 체결가 대비 관찰 시점 가격의 변화율(%). 부호는 시장 방향 그대로입니다.
   - action_aligned_markout: 위 가격 변화를 거래 방향에 맞춰 뒤집은 값. 매수는 그대로, 매도는 부호를 반대로 한 것입니다.
   - horizon: 이 결과를 언제 관찰했는지(next_turn=바로 다음, h1=1거래일 뒤, h5=5거래일 뒤). 같은 거래라도 관찰 시점에 따라 결과가 다를 수 있습니다.
+- reference_table: 각 인용번호가 무엇을 가리키는지 알려주는 표입니다. current_stb.dimension_evidence와 citable_reference_numbers_by_dimension에 나오는 번호를 여기서 확인하세요.
 - citable_reference_numbers_by_dimension: 각 차원에서 인용할 수 있는 **인용번호** 목록입니다. current_stb.dimension_evidence와 eligible_price_outcomes_dim_6_only의 항목이 이 번호로 표시됩니다. 목록에 없는 번호를 만들거나 raw 원문을 추정하지 마세요.
 - persona: 같은 정보를 해석하는 일관된 렌즈입니다. 페르소나를 수정하거나 새 특성을 만들지 마세요.
 
@@ -104,6 +105,7 @@ dim_6(자기 투자 능력 평가)은 최근의 나의 판단들이 얼마나 �
 
 추가 원칙:
 - 이전 Long-Term Belief와 오늘의 Short-Term Belief의 같은 차원을 통합해, 여섯 차원을 다음 거래용으로 작성하세요.
+- 여섯 차원을 이전 Long-Term Belief와 **한 글자도 다르지 않게** 그대로 제출하면 실패합니다. 관점이 유지되는 차원은 그대로 두어도 되지만, 오늘의 Short-Term Belief와 이번 체결을 통합한 결과가 최소 한 차원에는 드러나야 합니다.
 - 위 필수 key만 가진 JSON object 하나만 출력하세요. Markdown, 코드블록, 추가 key, 숨은 사고과정은 출력하지 마세요.
 - integration_evidence는 dim_1부터 dim_6까지 각각 support와 contradict 배열을 가져야 합니다.
 - 이번 체결 정보는 dim_6의 자기평가 **문장에만** 반영하세요. 오늘 체결은 인용번호가 없으며, 그 가격 결과는 아직 관찰되지 않았습니다.

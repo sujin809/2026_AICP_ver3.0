@@ -259,6 +259,7 @@ class IntegratedMemoryPromptWiringTests(unittest.IsolatedAsyncioTestCase):
                 "current_stb",
                 "transaction_episode",
                 "eligible_price_outcomes_dim_6_only",
+                "reference_table",
                 "citable_reference_numbers_by_dimension",
             },
         )

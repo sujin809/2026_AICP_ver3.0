@@ -192,6 +192,36 @@ def _normalize_dimension_evidence(
     return normalized, errors
 
 
+def _describe_evidence_id(evidence_id: str) -> str:
+    """Label an evidence ID for the LTB reference table without leaking raw text.
+
+    LTB 단계는 설계상 원문 뉴스·커뮤니티 본문을 받지 않는다. 그래서 번호만
+    노출하면 모델이 그 번호가 무엇을 가리키는지 전혀 알 수 없다. ID 문자열을
+    그대로 보여주면 다시 베껴 쓸 여지가 생기므로, ID에서 종류·날짜·분류만
+    뽑아 사람이 읽을 수 있는 라벨로 만든다.
+    """
+
+    if evidence_id.startswith("outcome:"):
+        parts = evidence_id.split(":")
+        horizon = parts[-1] if len(parts) >= 3 else "?"
+        return f"과거 체결의 가격 결과 (관찰 시점 {horizon})"
+    if evidence_id.startswith("community_claim:"):
+        parts = evidence_id.split(":")
+        order = parts[-1] if parts else "?"
+        return f"어제 커뮤니티에서 정리한 주장 {order}번"
+    if evidence_id.startswith("news_"):
+        chunks = evidence_id.split("_")
+        if len(chunks) >= 3:
+            raw_date = chunks[1]
+            category = chunks[2]
+            if len(raw_date) == 8 and raw_date.isdigit():
+                date = f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:]}"
+            else:
+                date = raw_date
+            return f"{date} {category} 뉴스"
+    return "근거"
+
+
 def _resolve_evidence_refs(
     value: Any,
     *,
@@ -810,6 +840,16 @@ async def update_long_term_belief(
         )
         for dimension in BELIEF_DIMENSION_KEYS
     }
+    # 번호만 주면 모델이 그 번호가 무엇인지 알 수 없다. 라이브에서 번호만
+    # 노출한 첫 실행은 여섯 차원을 통째로 복사하는 응답이 급증했다
+    # (일당 0.1회 -> 11.2회). 번호마다 무엇을 가리키는지 라벨을 붙인다.
+    reference_table = [
+        {
+            "인용번호": ref,
+            "설명": _describe_evidence_id(ref_to_id[ref]),
+        }
+        for ref in sorted(ref_to_id)
+    ]
 
     payload = {
         "schema_version": "simulation-post-fill-ltb-input-v2-reference-numbers",
@@ -826,6 +866,7 @@ async def update_long_term_belief(
         },
         "transaction_episode": dict(transaction_episode),
         "eligible_price_outcomes_dim_6_only": outcomes_view,
+        "reference_table": reference_table,
         "citable_reference_numbers_by_dimension": citable_by_dimension,
     }
     generated = await _generate_hierarchical_belief(
