@@ -333,9 +333,16 @@ async def _generate_hierarchical_belief(
             # 새 가격 결과가 도래한 턴에 한해 dim_6만 검사한다. 오류 문구도
             # 어느 차원을 고쳐야 하는지 그대로 가리킨다.
             if dimensions["dim_6"] == previous_dimensions["dim_6"]:
+                # v8에서 이 규칙만으로 재시도 4건이 소진됐다. 모델은 "동일하다"는
+                # 말만 듣고 어느 문장이 문제인지 몰라 같은 dim_6을 10번 반복했다.
+                # 피해야 할 문장을 오류에 그대로 실어 준다.
+                offending = previous_dimensions["dim_6"]
+                if len(offending) > 120:
+                    offending = offending[:120] + "…"
                 errors.append(
                     "dim_6_must_reflect_newly_matured_outcomes:"
-                    "dim_6_is_identical_to_previous_ltb"
+                    "dim_6_is_identical_to_previous_ltb:"
+                    f"do_not_repeat_this_sentence={offending!r}"
                 )
         # 가격 결과는 ID로 인용시키지 않고 순서대로 판정만 받는다.
         #
@@ -464,8 +471,18 @@ async def _generate_hierarchical_belief(
             prompt,
             errors=errors,
             schema_hint=(
-                "dim_1부터 dim_6까지의 비어 있지 않은 문자열과 "
-                f"{evidence_field}만 가진 JSON object를 출력하세요."
+                # 안내문은 검증기가 실제로 내는 오류와 1:1로 맞아야 한다.
+                # 라이브에서 규칙만 고치고 이 문구를 그대로 둔 적이 있는데,
+                # 모델이 자기 답과 맞지 않는 지적을 받고 10회 고착해 실행이
+                # 죽었다. 아래 문장을 고칠 때는 반드시 대응 검증도 함께 본다.
+                "출력할 최상위 key는 dim_1~dim_6과 "
+                f"{evidence_field}"
+                + (
+                    ", outcome_verdicts입니다."
+                    if ordered_outcome_ids
+                    else "입니다."
+                )
+                + " 그 외 key는 넣지 마세요."
                 # 같은 ID를 support/contradict 양쪽에 넣는 것은 규칙 위반인 줄
                 # 모르는 경우가 대부분이므로 규칙 자체는 알려준다. 다만 어느
                 # 쪽에 둘지는 지정하지 않는다. 기본값을 주면 양면적 근거가
@@ -475,35 +492,33 @@ async def _generate_hierarchical_belief(
                 " 한 쪽에만 넣으세요. 위 검증 오류에 ID가 적혀 있으면 그 ID를"
                 " 페르소나의 판단에 따라 한 쪽에서 제거하고, 지적되지 않은"
                 " 다른 차원은 그대로 두세요."
-                " 글자 수 초과가 지적된 차원은 한도 안으로 줄여 다시 쓰세요."
+                " unknown_ids 오류가 나면 입력에 실제로 있는 근거 ID만 쓰고,"
+                " allowed나 did_you_mean이 적혀 있으면 그 안에서 고르세요."
                 + (
                     " dim_6은 `정보 한계: ... / 주의점: ...` 형식으로 두 표시를"
                     " 모두 포함해야 하며 과거 성과 회고를 쓰지 마세요."
                     if dimension_text_validator is not None
                     else ""
                 )
-                # 가격 결과의 support/contradict는 dim_6 문장이 아니라 원래
-                # 거래 판단 기준으로 강제된다. 라이브에서 모델이 손실 결과를
-                # 방향은 더 이상 강제하지 않는다. 남은 요구사항은 "빠짐없이,
-                # 각각 한 번만"이라는 완전성뿐이므로 그것만 안내한다.
+                # 가격 결과는 인용이 아니라 순서 판정으로 받는다.
                 + (
-                    " 입력에 제공된 가격 결과 ID 전부를 빠짐없이, 각각 한 번만"
-                    " dim_6의 support 또는 contradict에 넣어야 합니다."
-                    " 어느 쪽에 넣을지는 당신의 판단입니다."
-                    " every_due_outcome 오류에 missing이 있으면 그 ID를 추가하고,"
-                    " duplicated가 있으면 중복분을 하나만 남기세요."
-                    " unknown_ids 오류에 allowed 목록이 있으면 그 안의 ID만"
-                    " 사용하고, 목록에 없는 ID는 지어내지 마세요."
-                    if required_dim_6_outcome_ids
+                    " 가격 결과는 outcome_verdicts 배열로만 판정합니다."
+                    f" 입력의 가격 결과 {len(ordered_outcome_ids)}건과 같은"
+                    " 순서로, 각각 \"support\" 또는 \"contradict\" 문자열만"
+                    f" 담아 길이 {len(ordered_outcome_ids)}인 배열을 내세요."
+                    " 가격 결과의 ID를 "
+                    f"{evidence_field}에 넣지 마세요."
+                    if ordered_outcome_ids
                     else ""
                 )
-                # 전 차원 완전 복사 거부 규칙은 프롬프트에 노출하지 않는
-                # 구현 상세이므로, 위반으로 거부됐을 때만 여기서 알려준다.
+                # dim_6 갱신 규칙은 새 가격 결과가 도래한 턴에만 적용된다.
+                # 오류 이름과 안내가 어긋나면 모델이 무엇을 고칠지 모른다.
                 + (
-                    " 여섯 차원 전체를 직전 Long-Term Belief와 완전히 동일하게"
-                    " 제출할 수는 없습니다. 오늘의 Short-Term Belief와 체결을"
-                    " 통합한 결과를 반영해 다시 작성하세요."
-                    if previous_dimensions is not None
+                    " dim_6_must_reflect_newly_matured_outcomes 오류가 나면,"
+                    " 새로 도래한 가격 결과에서 무엇을 확인했는지 dim_6 문장에"
+                    " 반영해 직전 Long-Term Belief의 dim_6과 다르게 다시"
+                    " 쓰세요. 다른 차원은 관점이 그대로면 유지해도 됩니다."
+                    if ordered_outcome_ids and previous_dimensions is not None
                     else ""
                 )
             ),

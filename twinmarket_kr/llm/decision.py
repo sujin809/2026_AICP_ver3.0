@@ -361,13 +361,19 @@ async def make_decision(
             raw_content=raw_content,
             seed=attempt_seed,
         )
+        # 안내문은 위 검증기가 실제로 내는 오류와 1:1로 맞아야 한다. 안내가 없는 오류는
+        # 모델이 무엇을 고쳐야 하는지 알 수 없어 같은 실패를 반복한다.
         current_prompt = (
             prompt
             + "\n\n이전 응답은 거래 제약을 위반했습니다. "
             + f"위반 항목: {decision.get('validation_errors')}. "
             + "판단 자체는 유지하거나 다시 판단해도 되지만, 설명하지 말고 JSON만 출력하세요. "
-            + "action은 반드시 allowed_actions 안의 buy 또는 sell이어야 합니다. "
-            + "quantity는 반드시 1 이상의 정수이고 선택한 action의 최대 수량 이하여야 합니다."
+            + "최상위 key는 action, requested_quantity, reason, risk_control 네 개뿐입니다. "
+            + "top_level_keys 오류의 unknown에 적힌 key는 빼고, missing에 적힌 key는 채우세요. "
+            + "action은 반드시 allowed_actions 안의 값이어야 하며, allowed_actions에 hold가 "
+            + "없으면 hold를 고를 수 없습니다. "
+            + "requested_quantity는 따옴표 없는 정수여야 하고, 최소 주문 단위 이상, "
+            + "선택한 action의 최대 수량 이하여야 합니다."
         )
     raise DecisionValidationError(
         "LLM did not produce a valid buy/sell decision after "
