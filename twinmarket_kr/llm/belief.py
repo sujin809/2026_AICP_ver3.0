@@ -540,10 +540,12 @@ async def _generate_hierarchical_belief(
                 # 쪽에 둘지는 지정하지 않는다. 기본값을 주면 양면적 근거가
                 # 특정 방향으로 계도되어 evidence 방향 집계에 연구자가 주입한
                 # 편향이 섞인다. 방향 판단은 모델의 관측 대상이다.
-                " 같은 근거 ID는 한 차원에서 support 또는 contradict 중"
-                " 한 쪽에만 넣으세요. 위 검증 오류에 ID가 적혀 있으면 그 ID를"
-                " 페르소나의 판단에 따라 한 쪽에서 제거하고, 지적되지 않은"
-                " 다른 차원은 그대로 두세요."
+                " 근거는 정수 인용번호로만 지목하세요. 같은 번호를 한 차원에서"
+                " support 또는 contradict 중 한 쪽에만 넣으세요. 위 검증 오류에"
+                " 번호가 적혀 있으면 그 번호를 페르소나의 판단에 따라 한 쪽에서"
+                " 제거하고, 지적되지 않은 다른 차원은 그대로 두세요."
+                " invalid_reference_number 오류가 있으면 allowed 범위 안의"
+                " 번호만 쓰고 없는 번호를 만들지 마세요."
                 " 글자 수 초과가 지적된 차원은 한도 안으로 줄여 다시 쓰세요."
                 + (
                     " dim_6은 `정보 한계: ... / 주의점: ...` 형식으로 두 표시를"
@@ -559,10 +561,8 @@ async def _generate_hierarchical_belief(
                     " 입력에 제공된 가격 결과 ID 전부를 빠짐없이, 각각 한 번만"
                     " dim_6의 support 또는 contradict에 넣어야 합니다."
                     " 어느 쪽에 넣을지는 당신의 판단입니다."
-                    " every_due_outcome 오류에 missing이 있으면 그 ID를 추가하고,"
+                    " every_due_outcome 오류에 missing이 있으면 그 번호를 추가하고,"
                     " duplicated가 있으면 중복분을 하나만 남기세요."
-                    " unknown_ids 오류에 allowed 목록이 있으면 그 안의 ID만"
-                    " 사용하고, 목록에 없는 ID는 지어내지 마세요."
                     if required_dim_6_outcome_ids
                     else ""
                 )

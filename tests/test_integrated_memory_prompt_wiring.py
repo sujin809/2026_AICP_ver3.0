@@ -165,7 +165,7 @@ class IntegratedMemoryPromptWiringTests(unittest.IsolatedAsyncioTestCase):
                 "persona",
                 "event",
                 "current_evidence",
-                "sanitized_evidence_registry",
+                "citable_reference_numbers",
             },
         )
         forbidden = {
@@ -259,7 +259,7 @@ class IntegratedMemoryPromptWiringTests(unittest.IsolatedAsyncioTestCase):
                 "current_stb",
                 "transaction_episode",
                 "eligible_price_outcomes_dim_6_only",
-                "sanitized_evidence_registry",
+                "citable_reference_numbers_by_dimension",
             },
         )
         self.assertEqual(
@@ -270,13 +270,16 @@ class IntegratedMemoryPromptWiringTests(unittest.IsolatedAsyncioTestCase):
             payload["transaction_episode"]["fill_id"],
             "fill:current",
         )
+        # 모델에게는 ID 대신 인용번호만 노출된다. STB 근거가 1번을 쓰므로
+        # 도래 outcome은 그 다음 번호를 받는다.
         self.assertEqual(
             [
-                row["outcome_id"]
+                row["인용번호"]
                 for row in payload["eligible_price_outcomes_dim_6_only"]
             ],
-            [due_outcome_id],
+            [2],
         )
+        self.assertNotIn(due_outcome_id, client.prompts[0])
         self.assertNotIn("HUMAN_SUMMARY_MUST_NOT_ENTER_LTB_PROMPT", client.prompts[0])
         self.assertNotIn("HUMAN_CHANGE_MUST_NOT_ENTER_LTB_PROMPT", client.prompts[0])
         self.assertEqual(
@@ -555,7 +558,7 @@ class StbScopeAndAnalysisEvidenceContractTests(unittest.IsolatedAsyncioTestCase)
                 "persona",
                 "event",
                 "current_evidence",
-                "sanitized_evidence_registry",
+                "citable_reference_numbers",
             },
         )
 
@@ -687,8 +690,8 @@ class StbScopeAndAnalysisEvidenceContractTests(unittest.IsolatedAsyncioTestCase)
         self.assertIn("transaction_episode", payload)
         self.assertIn("eligible_price_outcomes_dim_6_only", payload)
         self.assertEqual(
-            [item["outcome_id"] for item in payload["eligible_price_outcomes_dim_6_only"]],
-            [due_outcome_id],
+            [item["인용번호"] for item in payload["eligible_price_outcomes_dim_6_only"]],
+            [2],
         )
 
     async def _run_stb_sequence(self, responses: list[dict[str, Any]]) -> _SequenceClient:
@@ -734,7 +737,7 @@ class StbScopeAndAnalysisEvidenceContractTests(unittest.IsolatedAsyncioTestCase)
         retry = client.prompts[1]
         # 어느 차원인지뿐 아니라 어느 ID인지까지 재시도 프롬프트에 들어가야 한다.
         self.assertIn("dimension_evidence.dim_4:same_id_in_both_relations", retry)
-        self.assertIn("news:a", retry)
+        self.assertIn("1번", retry)
         # 겹치지 않은 news:b는 위반 목록에 들어가지 않는다.
         self.assertNotIn("same_id_in_both_relations:['news:a', 'news:b']", retry)
 
