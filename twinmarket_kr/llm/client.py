@@ -948,17 +948,18 @@ async def _global_openrouter_slot(limit: int, *, slot_namespace: str | None = No
 
 def _offline_response(messages: list[dict[str, str]]) -> str:
     prompt = messages[-1].get("content", "") if messages else ""
-    if '"schema_version": "simulation-stb-input-v1"' in prompt:
+    if '"schema_version": "simulation-stb-input-v2-reference-numbers"' in prompt:
         payload = _extract_json_after_label(prompt, "입력 정보(JSON):")
-        evidence_ids = [
-            str(value)
-            for value in payload.get("sanitized_evidence_registry", [])
-            if str(value)
+        # 라이브와 같은 계약을 지킨다: 근거는 문자열 ID가 아니라 인용 번호다.
+        refs = [
+            int(value)
+            for value in payload.get("citable_reference_numbers", [])
+            if isinstance(value, int) or str(value).isdigit()
         ]
-        first_id = evidence_ids[:1]
+        first_ref = refs[:1]
         dimension_evidence = {
             f"dim_{index}": {
-                "support": list(first_id),
+                "support": list(first_ref),
                 "contradict": [],
             }
             for index in range(1, 7)
@@ -977,7 +978,7 @@ def _offline_response(messages: list[dict[str, str]]) -> str:
             },
             ensure_ascii=False,
         )
-    if '"schema_version": "simulation-post-fill-ltb-input-v1"' in prompt:
+    if '"schema_version": "simulation-post-fill-ltb-input-v2-reference-numbers"' in prompt:
         payload = _extract_json_after_label(prompt, "입력 정보(JSON):")
         current_stb = payload.get("current_stb") or {}
         raw_evidence = current_stb.get("dimension_evidence") or {}
@@ -1000,7 +1001,7 @@ def _offline_response(messages: list[dict[str, str]]) -> str:
         from twinmarket_kr.outcome_schedule import outcome_evidence_relation
 
         for row in due_outcomes:
-            if not isinstance(row, dict) or not row.get("outcome_id"):
+            if not isinstance(row, dict) or row.get("인용번호") is None:
                 continue
             relation = (
                 outcome_evidence_relation(
@@ -1009,7 +1010,7 @@ def _offline_response(messages: list[dict[str, str]]) -> str:
                 or "support"
             )
             integration_evidence["dim_6"][relation].append(
-                str(row["outcome_id"])
+                int(row["인용번호"])
             )
         event = payload.get("event") or {}
         turn = int(event.get("turn") or 0)

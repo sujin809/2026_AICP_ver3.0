@@ -192,6 +192,70 @@ def _normalize_dimension_evidence(
     return normalized, errors
 
 
+def _resolve_evidence_refs(
+    value: Any,
+    *,
+    field: str,
+    ref_to_id: Mapping[int, str],
+) -> tuple[Any, list[str]]:
+    """Translate model-facing reference numbers into real evidence IDs.
+
+    라이브에서 실행을 죽인 유일한 원인이 근거 ID 환각이었다. 30자짜리
+    ID 문자열을 모델이 받아쓰게 하면 없는 ID를 지어내고, 정답 목록을
+    오류에 실어 보여줘도 10회 내내 같은 값을 고집해 소진됐다.
+    (예: 오늘 자기가 체결한 fill_id로 outcome ID를 조립)
+
+    번호는 1..N이라는 유한하고 좁은 공간이라 지어낼 자리가 없다. 여기서
+    실제 ID로 되돌려 놓으면 이후 검증(중복·양면·관계 유지·완전성)과 저장은
+    지금까지의 로직을 그대로 쓴다. 연구 데이터도 동일하다.
+    """
+
+    if not isinstance(value, Mapping):
+        return value, []
+    errors: list[str] = []
+    resolved: dict[str, Any] = {}
+    allowed_hint = (
+        f"1~{len(ref_to_id)}" if ref_to_id else "없음(인용 가능한 근거 없음)"
+    )
+    for dimension, relations in value.items():
+        if not isinstance(relations, Mapping):
+            resolved[dimension] = relations
+            continue
+        resolved_relations: dict[str, Any] = {}
+        for relation, rows in relations.items():
+            if not isinstance(rows, list):
+                resolved_relations[relation] = rows
+                continue
+            translated: list[Any] = []
+            bad: list[Any] = []
+            for item in rows:
+                # 문자열 "3"도 번호로 받아준다. 형식 실수로 소진되게 두지 않는다.
+                ref: Any = item
+                if isinstance(ref, str) and ref.strip().lstrip("-").isdigit():
+                    ref = int(ref.strip())
+                if not isinstance(ref, bool) and isinstance(ref, int):
+                    evidence_id = ref_to_id.get(ref)
+                    if evidence_id is None:
+                        bad.append(item)
+                        continue
+                    translated.append(evidence_id)
+                    continue
+                # 번호가 아닌 값은 그대로 흘려보내 기존 ID 검증에 맡긴다.
+                # 프롬프트에는 실제 ID가 노출되지 않으므로 모델이 ID를 베껴
+                # 쓸 수단이 없다. 그래도 우연히 유효한 ID를 냈다면 굳이
+                # 거부해 예산을 태울 이유가 없고, 지어낸 값이면 아래
+                # unknown_ids 검증이 잡는다.
+                translated.append(item)
+            if bad:
+                errors.append(
+                    f"{field}.{dimension}.{relation}:invalid_reference_number:"
+                    f"{bad}:allowed={allowed_hint}"
+                )
+            resolved_relations[relation] = translated
+        resolved[dimension] = resolved_relations
+    return resolved, errors
+
+
 async def _generate_hierarchical_belief(
     *,
     prompt_name: str,
@@ -204,6 +268,7 @@ async def _generate_hierarchical_belief(
     validation_attempts: int,
     previous_dimensions: Mapping[str, str] | None = None,
     required_dim_6_outcome_ids: set[str] | None = None,
+    ref_to_id: Mapping[int, str] | None = None,
     fixed_relations_by_dimension: Mapping[
         str,
         Mapping[str, set[str]],
@@ -283,8 +348,17 @@ async def _generate_hierarchical_belief(
             errors.append(str(exc))
         if dimensions and dimension_text_validator is not None:
             errors.extend(dimension_text_validator(dimensions))
+        evidence_input = raw.get(evidence_field)
+        ref_errors: list[str] = []
+        if ref_to_id is not None:
+            evidence_input, ref_errors = _resolve_evidence_refs(
+                evidence_input,
+                field=evidence_field,
+                ref_to_id=ref_to_id,
+            )
+            errors.extend(ref_errors)
         evidence, evidence_errors = _normalize_dimension_evidence(
-            raw.get(evidence_field),
+            evidence_input,
             field=evidence_field,
             allowed_ids_by_dimension=allowed_ids_by_dimension,
         )
@@ -354,6 +428,26 @@ async def _generate_hierarchical_belief(
                 errors.append(
                     f"every_due_outcome_must_be_cited_once_in_dim_6{detail}"
                 )
+        if ref_to_id is not None and errors:
+            # 검증기는 실제 ID로 판단하지만 모델은 번호만 안다. 오류에 실제
+            # ID가 남아 있으면 모델이 그 문자열을 그대로 답에 복사하려 들어
+            # 번호 체계가 무너진다. 긴 ID부터 치환해 부분 일치를 피한다.
+            id_to_ref = {
+                evidence_id: ref for ref, evidence_id in ref_to_id.items()
+            }
+            def _to_refs(message: str) -> str:
+                for evidence_id in sorted(id_to_ref, key=len, reverse=True):
+                    message = message.replace(
+                        evidence_id, f"{id_to_ref[evidence_id]}번"
+                    )
+                return message
+            # 번호 변환 실패 메시지는 모델이 실제로 쓴 원문을 담고 있으므로
+            # 치환하면 안 된다. 치환하면 "유효한 1번이 잘못됐다"처럼 읽힌다.
+            untouched = set(ref_errors)
+            errors = [
+                message if message in untouched else _to_refs(message)
+                for message in errors
+            ]
         return dimensions, evidence, errors
 
     if journal_call is not None and journal_call.replay is not None:
@@ -501,16 +595,37 @@ async def generate_short_term_belief(
     """Create the current-turn STB from news/community evidence only."""
 
     client = client or OpenRouterClient()
+    # 모델에게는 evidence_id 문자열 대신 인용 번호만 보여준다. 인용 번호는
+    # 노출 순서(뉴스 -> D2 검색 -> 커뮤니티 claim) 그대로 1부터 매긴다.
+    ref_to_id: dict[int, str] = {}
+    evidence_view: dict[str, Any] = {}
+    next_ref = 1
+    for kind in ("news", "depth2_search_results", "community_claims"):
+        rows_out: list[dict[str, Any]] = []
+        for row in current_evidence.get(kind) or []:
+            item = {
+                key: value
+                for key, value in dict(row).items()
+                if key != "evidence_id"
+            }
+            evidence_id = str(row.get("evidence_id") or "")
+            if evidence_id in allowed_evidence_ids:
+                ref_to_id[next_ref] = evidence_id
+                item = {"인용번호": next_ref, **item}
+                next_ref += 1
+            rows_out.append(item)
+        evidence_view[kind] = rows_out
+
     payload = {
-        "schema_version": "simulation-stb-input-v1",
+        "schema_version": "simulation-stb-input-v2-reference-numbers",
         "persona": {
             "agent_id": str(agent["agent_id"]),
             "news_depth": int(agent.get("news_depth") or 0),
             "persona_prompt": str(agent["persona_prompt"]),
         },
         "event": dict(event),
-        "current_evidence": dict(current_evidence),
-        "sanitized_evidence_registry": sorted(allowed_evidence_ids),
+        "current_evidence": evidence_view,
+        "citable_reference_numbers": sorted(ref_to_id),
     }
     allowed = {
         dimension: set(allowed_evidence_ids)
@@ -525,6 +640,7 @@ async def generate_short_term_belief(
         client=client,
         seed=seed,
         validation_attempts=validation_attempts,
+        ref_to_id=ref_to_id,
         dimension_text_validator=validate_stb_dim_6_scope,
     )
 
@@ -648,8 +764,55 @@ async def update_long_term_belief(
             raise BeliefValidationError(
                 f"{outcome_id} has invalid action_aligned_markout"
             ) from exc
+    # STB와 같은 이유로 LTB도 인용 번호만 노출한다. 번호는 STB 근거를
+    # dim_1..dim_6 순서로 훑은 뒤 가격 결과를 붙여 1부터 매긴다.
+    ref_to_id: dict[int, str] = {}
+    id_to_ref: dict[str, int] = {}
+    next_ref = 1
+    for dimension in BELIEF_DIMENSION_KEYS:
+        for relation in BELIEF_EVIDENCE_RELATIONS:
+            for evidence_id in normalized_stb_evidence[dimension][relation]:
+                if evidence_id not in id_to_ref:
+                    ref_to_id[next_ref] = evidence_id
+                    id_to_ref[evidence_id] = next_ref
+                    next_ref += 1
+    for outcome_id in outcome_id_list:
+        if outcome_id not in id_to_ref:
+            ref_to_id[next_ref] = outcome_id
+            id_to_ref[outcome_id] = next_ref
+            next_ref += 1
+
+    stb_evidence_view = {
+        dimension: {
+            relation: [
+                id_to_ref[evidence_id]
+                for evidence_id in normalized_stb_evidence[dimension][relation]
+            ]
+            for relation in BELIEF_EVIDENCE_RELATIONS
+        }
+        for dimension in BELIEF_DIMENSION_KEYS
+    }
+    outcomes_view = [
+        {
+            "인용번호": id_to_ref[str(item["outcome_id"]).strip()],
+            **{
+                key: value
+                for key, value in item.items()
+                if key != "outcome_id"
+            },
+        }
+        for item in outcomes
+    ]
+    citable_by_dimension = {
+        dimension: sorted(
+            id_to_ref[evidence_id]
+            for evidence_id in allowed_by_dimension[dimension]
+        )
+        for dimension in BELIEF_DIMENSION_KEYS
+    }
+
     payload = {
-        "schema_version": "simulation-post-fill-ltb-input-v1",
+        "schema_version": "simulation-post-fill-ltb-input-v2-reference-numbers",
         "persona": {
             "agent_id": str(agent["agent_id"]),
             "news_depth": int(agent.get("news_depth") or 0),
@@ -659,13 +822,11 @@ async def update_long_term_belief(
         "previous_ltb": previous_dimensions,
         "current_stb": {
             "dimensions": current_dimensions,
-            "dimension_evidence": normalized_stb_evidence,
+            "dimension_evidence": stb_evidence_view,
         },
         "transaction_episode": dict(transaction_episode),
-        "eligible_price_outcomes_dim_6_only": outcomes,
-        "sanitized_evidence_registry": sorted(
-            set().union(*allowed_by_dimension.values())
-        ),
+        "eligible_price_outcomes_dim_6_only": outcomes_view,
+        "citable_reference_numbers_by_dimension": citable_by_dimension,
     }
     generated = await _generate_hierarchical_belief(
         prompt_name="update_long_term_belief.txt",
@@ -678,6 +839,7 @@ async def update_long_term_belief(
         validation_attempts=validation_attempts,
         previous_dimensions=previous_dimensions,
         required_dim_6_outcome_ids=outcome_ids,
+        ref_to_id=ref_to_id,
         fixed_relations_by_dimension=fixed_relations_by_dimension,
     )
     summary, view_change = render_ltb_human_log(
