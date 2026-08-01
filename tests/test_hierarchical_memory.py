@@ -819,10 +819,11 @@ class HierarchicalBeliefValidationTests(unittest.IsolatedAsyncioTestCase):
         ) -> dict[str, object]:
             integration = _evidence()
             integration["dim_1"][news_relation] = ["news-1"]
-            integration["dim_6"][outcome_relation] = [outcome_id]
+            # 가격 결과는 인용이 아니라 순서대로 판정만 낸다.
             return {
                 **_dimensions(label),
                 "integration_evidence": integration,
+                "outcome_verdicts": [outcome_relation],
             }
 
         client = _SequenceClient(

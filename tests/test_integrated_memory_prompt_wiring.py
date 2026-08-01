@@ -165,7 +165,7 @@ class IntegratedMemoryPromptWiringTests(unittest.IsolatedAsyncioTestCase):
                 "persona",
                 "event",
                 "current_evidence",
-                "citable_reference_numbers",
+                "sanitized_evidence_registry",
             },
         )
         forbidden = {
@@ -185,14 +185,12 @@ class IntegratedMemoryPromptWiringTests(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         due_outcome_id = "outcome:fill-previous:h1"
-        integration = _evidence(
-            dim_1_support=["news:current"],
-            dim_6_support=[due_outcome_id],
-        )
+        integration = _evidence(dim_1_support=["news:current"])
         client = _CaptureClient(
             {
                 **_dimensions("post-fill ltb"),
                 "integration_evidence": integration,
+                "outcome_verdicts": ["support"],
             }
         )
         result = await update_long_term_belief(
@@ -259,8 +257,7 @@ class IntegratedMemoryPromptWiringTests(unittest.IsolatedAsyncioTestCase):
                 "current_stb",
                 "transaction_episode",
                 "eligible_price_outcomes_dim_6_only",
-                "reference_table",
-                "citable_reference_numbers_by_dimension",
+                "sanitized_evidence_registry",
             },
         )
         self.assertEqual(
@@ -271,14 +268,13 @@ class IntegratedMemoryPromptWiringTests(unittest.IsolatedAsyncioTestCase):
             payload["transaction_episode"]["fill_id"],
             "fill:current",
         )
-        # 모델에게는 ID 대신 인용번호만 노출된다. STB 근거가 1번을 쓰므로
-        # 도래 outcome은 그 다음 번호를 받는다.
+        # 가격 결과는 ID 대신 순번으로만 노출된다(환각 차단).
         self.assertEqual(
             [
-                row["인용번호"]
+                row["순번"]
                 for row in payload["eligible_price_outcomes_dim_6_only"]
             ],
-            [2],
+            [1],
         )
         self.assertNotIn(due_outcome_id, client.prompts[0])
         self.assertNotIn("HUMAN_SUMMARY_MUST_NOT_ENTER_LTB_PROMPT", client.prompts[0])
@@ -559,7 +555,7 @@ class StbScopeAndAnalysisEvidenceContractTests(unittest.IsolatedAsyncioTestCase)
                 "persona",
                 "event",
                 "current_evidence",
-                "citable_reference_numbers",
+                "sanitized_evidence_registry",
             },
         )
 
@@ -632,8 +628,8 @@ class StbScopeAndAnalysisEvidenceContractTests(unittest.IsolatedAsyncioTestCase)
                 **_dimensions("post-fill ltb"),
                 "integration_evidence": _evidence(
                     dim_1_support=["news:current"],
-                    dim_6_support=[due_outcome_id],
                 ),
+                "outcome_verdicts": ["support"],
             }
         )
         await update_long_term_belief(
@@ -679,7 +675,7 @@ class StbScopeAndAnalysisEvidenceContractTests(unittest.IsolatedAsyncioTestCase)
         # 설명해 에이전트가 스스로 판단할 맥락을 준다. 강제하던 시절에는
         # 모델이 매도 성공(가격 하락)을 실패로 읽는 오분류를 10회 내내
         # 반복해 실행을 죽였다(v4 소진 24건 중 22건).
-        self.assertIn("어느 쪽에 넣을지는 **당신이 판단합니다**", instructions)
+        self.assertIn("어느 쪽인지는 **당신이 판단합니다**", instructions)
         self.assertIn("매도한 뒤 가격이 내렸다", instructions)
         self.assertIn("부분 매도", instructions)
         self.assertNotIn("action_aligned_markout가 양수면 support", instructions)
@@ -691,8 +687,8 @@ class StbScopeAndAnalysisEvidenceContractTests(unittest.IsolatedAsyncioTestCase)
         self.assertIn("transaction_episode", payload)
         self.assertIn("eligible_price_outcomes_dim_6_only", payload)
         self.assertEqual(
-            [item["인용번호"] for item in payload["eligible_price_outcomes_dim_6_only"]],
-            [2],
+            [item["순번"] for item in payload["eligible_price_outcomes_dim_6_only"]],
+            [1],
         )
 
     async def _run_stb_sequence(self, responses: list[dict[str, Any]]) -> _SequenceClient:
@@ -738,7 +734,7 @@ class StbScopeAndAnalysisEvidenceContractTests(unittest.IsolatedAsyncioTestCase)
         retry = client.prompts[1]
         # 어느 차원인지뿐 아니라 어느 ID인지까지 재시도 프롬프트에 들어가야 한다.
         self.assertIn("dimension_evidence.dim_4:same_id_in_both_relations", retry)
-        self.assertIn("1번", retry)
+        self.assertIn("news:a", retry)
         # 겹치지 않은 news:b는 위반 목록에 들어가지 않는다.
         self.assertNotIn("same_id_in_both_relations:['news:a', 'news:b']", retry)
 
@@ -860,22 +856,21 @@ class StbScopeAndAnalysisEvidenceContractTests(unittest.IsolatedAsyncioTestCase)
         self.assertEqual(result["dim_6"], "previous ltb dimension 6")
         self.assertEqual(len(client.prompts), 1)  # 첫 시도 수락
 
-    async def test_ltb_rejects_verbatim_copy_of_all_six_dimensions(self) -> None:
+    async def test_ltb_allows_full_carryover_when_no_outcome_matured(self) -> None:
+        """도래한 가격 결과가 없으면 여섯 차원 유지도 정당한 관측값이다.
+
+        오늘 STB가 어제 관점과 사실상 같은 말을 하는 날이 있고, 그때 억지
+        재서술을 강제하면 임베딩 기반 deviation에 가짜 변화량이 주입된다.
+        """
+
         full_copy = {
             **_dimensions("previous ltb"),
             "integration_evidence": _evidence(dim_1_support=["news:current"]),
         }
-        fixed = {
-            **{k: f"통합된 {k}" for k in full_copy if k.startswith("dim_")},
-            "integration_evidence": _evidence(dim_1_support=["news:current"]),
-        }
-        client = _SequenceClient([full_copy, fixed])
+        client = _SequenceClient([full_copy])
         result = await self._run_ltb(client)
-        self.assertEqual(len(client.prompts), 2)
-        retry = client.prompts[1]
-        self.assertIn("ltb_must_not_copy_all_six_dimensions_verbatim", retry)
-        self.assertIn("완전히 동일하게", retry)
-        self.assertEqual(result["dim_1"], "통합된 dim_1")
+        self.assertEqual(len(client.prompts), 1)
+        self.assertEqual(result["dim_1"], "previous ltb dimension 1")
 
     async def test_ltb_prompt_no_longer_demands_forced_rewrite(self) -> None:
         client = _CaptureClient(

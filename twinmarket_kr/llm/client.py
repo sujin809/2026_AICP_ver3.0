@@ -948,18 +948,17 @@ async def _global_openrouter_slot(limit: int, *, slot_namespace: str | None = No
 
 def _offline_response(messages: list[dict[str, str]]) -> str:
     prompt = messages[-1].get("content", "") if messages else ""
-    if '"schema_version": "simulation-stb-input-v2-reference-numbers"' in prompt:
+    if '"schema_version": "simulation-stb-input-v1"' in prompt:
         payload = _extract_json_after_label(prompt, "입력 정보(JSON):")
-        # 라이브와 같은 계약을 지킨다: 근거는 문자열 ID가 아니라 인용 번호다.
-        refs = [
-            int(value)
-            for value in payload.get("citable_reference_numbers", [])
-            if isinstance(value, int) or str(value).isdigit()
+        evidence_ids = [
+            str(value)
+            for value in payload.get("sanitized_evidence_registry", [])
+            if str(value)
         ]
-        first_ref = refs[:1]
+        first_id = evidence_ids[:1]
         dimension_evidence = {
             f"dim_{index}": {
-                "support": list(first_ref),
+                "support": list(first_id),
                 "contradict": [],
             }
             for index in range(1, 7)
@@ -978,7 +977,7 @@ def _offline_response(messages: list[dict[str, str]]) -> str:
             },
             ensure_ascii=False,
         )
-    if '"schema_version": "simulation-post-fill-ltb-input-v2-reference-numbers"' in prompt:
+    if '"schema_version": "simulation-post-fill-ltb-input-v1"' in prompt:
         payload = _extract_json_after_label(prompt, "입력 정보(JSON):")
         current_stb = payload.get("current_stb") or {}
         raw_evidence = current_stb.get("dimension_evidence") or {}
@@ -1000,22 +999,19 @@ def _offline_response(messages: list[dict[str, str]]) -> str:
         # flat outcome is consumed in support by deterministic convention.
         from twinmarket_kr.outcome_schedule import outcome_evidence_relation
 
-        for row in due_outcomes:
-            if not isinstance(row, dict) or row.get("인용번호") is None:
-                continue
-            relation = (
-                outcome_evidence_relation(
-                    row.get("action_aligned_markout")
-                )
-                or "support"
-            )
-            integration_evidence["dim_6"][relation].append(
-                int(row["인용번호"])
-            )
+        # 가격 결과는 인용이 아니라 순서대로 판정만 낸다(라이브와 같은 계약).
+        verdicts = [
+            outcome_evidence_relation(row.get("action_aligned_markout"))
+            or "support"
+            for row in due_outcomes
+            if isinstance(row, dict)
+        ]
         event = payload.get("event") or {}
         turn = int(event.get("turn") or 0)
+        extra = {"outcome_verdicts": verdicts} if verdicts else {}
         return json.dumps(
             {
+                **extra,
                 "dim_1": f"{turn}번째 정보까지 통합해 한 달 방향을 신중하게 본다.",
                 "dim_2": f"{turn}번째 판단에서도 밸류에이션 확신을 제한한다.",
                 "dim_3": f"{turn}번째 갱신 후에도 거시와 업황 확인을 이어간다.",
