@@ -23,6 +23,7 @@ from twinmarket_kr.llm.validation import (
     build_validation_retry_prompt,
     normalize_string_list,
     record_validation_failure,
+    retry_temperature_schedule,
     valid_string_list,
 )
 
@@ -141,10 +142,7 @@ async def _required_json_response(
         raise ValueError("validation_attempts must be at least 1")
     invalid_history: list[list[str]] = []
     current_prompt = prompt
-    temperatures = [
-        0.2 if attempt == 1 else 0.1
-        for attempt in range(1, validation_attempts + 1)
-    ]
+    temperatures = retry_temperature_schedule(0.2, validation_attempts)
     seeds = [
         stable_llm_seed(seed or 0, label, attempt)
         for attempt in range(1, validation_attempts + 1)

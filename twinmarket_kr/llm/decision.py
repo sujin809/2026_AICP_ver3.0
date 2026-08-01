@@ -15,7 +15,11 @@ from twinmarket_kr.llm.response_journal import (
     open_journal_call,
     parse_strict_json_object,
 )
-from twinmarket_kr.llm.validation import LLMValidationError, record_validation_failure
+from twinmarket_kr.llm.validation import (
+    LLMValidationError,
+    record_validation_failure,
+    retry_temperature_schedule,
+)
 
 
 def build_trading_constraints(
@@ -235,10 +239,7 @@ async def make_decision(
     invalid_history: list[list[str]] = []
     current_prompt = prompt
     stage = "trading_decision"
-    temperatures = [
-        0.2 if attempt == 1 else 0.1
-        for attempt in range(1, validation_attempts + 1)
-    ]
+    temperatures = retry_temperature_schedule(0.2, validation_attempts)
     seeds = [
         stable_llm_seed(seed or 0, "decision_validation", attempt)
         for attempt in range(1, validation_attempts + 1)

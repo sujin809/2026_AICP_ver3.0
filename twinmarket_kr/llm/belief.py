@@ -27,6 +27,7 @@ from twinmarket_kr.llm.validation import (
     LLMValidationError,
     build_validation_retry_prompt,
     record_validation_failure,
+    retry_temperature_schedule,
 )
 
 
@@ -224,10 +225,7 @@ async def _generate_hierarchical_belief(
         required_keys.add("outcome_verdicts")
     invalid_history: list[list[str]] = []
     current_prompt = prompt
-    temperatures = [
-        0.2 if attempt == 1 else 0.1
-        for attempt in range(1, validation_attempts + 1)
-    ]
+    temperatures = retry_temperature_schedule(0.2, validation_attempts)
     seeds = [
         stable_llm_seed(seed or 0, audit_label, attempt)
         for attempt in range(1, validation_attempts + 1)
@@ -519,6 +517,24 @@ async def _generate_hierarchical_belief(
                     " 반영해 직전 Long-Term Belief의 dim_6과 다르게 다시"
                     " 쓰세요. 다른 차원은 관점이 그대로면 유지해도 됩니다."
                     if ordered_outcome_ids and previous_dimensions is not None
+                    else ""
+                )
+                # 같은 지적을 세 번 넘게 받았다면 모델은 자기 dim_6이 이미 옳다고
+                # 보고 같은 문장을 다시 낸다. 그 상태에서는 "다르게 쓰라"는 말이
+                # 행동으로 옮겨지지 않는다. 무엇을 더 쓸지 구체적으로 지시한다.
+                # 이는 통과 기준을 낮추는 것이 아니라 규칙의 목적(새 결과의 통합)을
+                # 그대로 풀어 말한 것이다.
+                + (
+                    " 앞선 시도에서 같은 지적을 반복해서 받았습니다. 기존 자기평가"
+                    " 결론이 여전히 옳다고 보더라도, 이번에 새로 도래한 가격 결과가"
+                    " 그 결론을 어떻게 굳혔는지 또는 어디를 흔들었는지 한 문장 이상"
+                    " 덧붙여 dim_6을 다시 쓰세요. 결론을 뒤집으라는 뜻이 아니라,"
+                    " 이번 결과를 반영한 흔적이 문장에 남아야 한다는 뜻입니다."
+                    if (
+                        ordered_outcome_ids
+                        and previous_dimensions is not None
+                        and attempt >= 3
+                    )
                     else ""
                 )
             ),

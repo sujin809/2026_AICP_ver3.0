@@ -21,7 +21,11 @@ from twinmarket_kr.llm.response_journal import (
     open_journal_call,
     parse_strict_json_object,
 )
-from twinmarket_kr.llm.validation import build_validation_retry_prompt, record_validation_failure
+from twinmarket_kr.llm.validation import (
+    build_validation_retry_prompt,
+    record_validation_failure,
+    retry_temperature_schedule,
+)
 
 
 POST_TYPES = {"impression", "question", "trade_share", "profit_share", "analysis", "column"}
@@ -87,7 +91,7 @@ async def posting_decision(
     current_prompt = prompt
     stage = "community_posting"
     validation_attempts = 10
-    temperatures = [0.7 if a == 1 else 0.3 for a in range(1, validation_attempts + 1)]
+    temperatures = retry_temperature_schedule(0.7, validation_attempts)
     seeds = [
         stable_llm_seed(seed or 0, "community_posting_validation", attempt)
         for attempt in range(1, validation_attempts + 1)

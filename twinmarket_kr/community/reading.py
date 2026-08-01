@@ -44,7 +44,11 @@ from twinmarket_kr.llm.response_journal import (
     open_journal_call,
     parse_strict_json_object,
 )
-from twinmarket_kr.llm.validation import build_validation_retry_prompt, record_validation_failure
+from twinmarket_kr.llm.validation import (
+    build_validation_retry_prompt,
+    record_validation_failure,
+    retry_temperature_schedule,
+)
 
 
 def _validate_selection(
@@ -150,7 +154,7 @@ async def community_reading_select(
     current_prompt = prompt
     stage = "community_read_select"
     validation_attempts = 10
-    temperatures = [0.3 if a == 1 else 0.1 for a in range(1, validation_attempts + 1)]
+    temperatures = retry_temperature_schedule(0.3, validation_attempts)
     seeds = [
         stable_llm_seed(seed or 0, "community_select_validation", attempt)
         for attempt in range(1, validation_attempts + 1)
@@ -287,7 +291,7 @@ async def community_reading_react(
     current_prompt = prompt
     stage = "community_read_react"
     validation_attempts = 10
-    temperatures = [0.2 if a == 1 else 0.1 for a in range(1, validation_attempts + 1)]
+    temperatures = retry_temperature_schedule(0.2, validation_attempts)
     seeds = [
         stable_llm_seed(seed or 0, "community_react_validation", attempt)
         for attempt in range(1, validation_attempts + 1)
