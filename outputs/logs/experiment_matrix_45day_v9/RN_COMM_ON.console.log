@@ -1,0 +1,14 @@
+
+[launch_attempt=1 started_at=2026-08-02T02:03:01.724847]
+2026-02-27 turns=1/2 phases=am am_orders=100 am_volume=21840 pm=skipped_or_loaded
+log_dir=/Users/sujinjung/Desktop/felab/aicp/2026_AICP_ver3.0/outputs/logs/experiment_matrix_45day_v9/RN_COMM_ON
+  community_phase done: 70 agents, 5 best posts
+2026-02-27 turns=1/2 phases=pm,community am=skipped pm_orders=100 pm_volume=14044
+log_dir=/Users/sujinjung/Desktop/felab/aicp/2026_AICP_ver3.0/outputs/logs/experiment_matrix_45day_v9/RN_COMM_ON
+2026-03-03 turns=3/4 phases=am am_orders=100 am_volume=14397 pm=skipped_or_loaded
+log_dir=/Users/sujinjung/Desktop/felab/aicp/2026_AICP_ver3.0/outputs/logs/experiment_matrix_45day_v9/RN_COMM_ON
+  community_phase done: 70 agents, 5 best posts
+2026-03-03 turns=3/4 phases=pm,community am=skipped pm_orders=100 pm_volume=16503
+log_dir=/Users/sujinjung/Desktop/felab/aicp/2026_AICP_ver3.0/outputs/logs/experiment_matrix_45day_v9/RN_COMM_ON
+2026-03-04 turns=5/6 phases=am am_orders=100 am_volume=15925 pm=skipped_or_loaded
+log_dir=/Users/sujinjung/Desktop/felab/aicp/2026_AICP_ver3.0/outputs/logs/experiment_matrix_45day_v9/RN_COMM_ON
