@@ -1935,16 +1935,38 @@ def validate_response_journal_audit(
             row.get("error_type") is not None
             or row.get("error") is not None
             or str(row.get("returned_model") or "") != expected_model
-            or str(row.get("provider") or "") != expected_provider
+            # OpenRouter는 요청에 슬러그("alibaba")를 받고 응답에는 표시명
+            # ("Alibaba")을 돌려준다. 정확 문자열 비교는 정상 응답을 전부
+            # 거부해서, 완주한 run도 사후 검증을 통과할 수 없었다. call_policy는
+            # 같은 이유로 이미 casefold 비교를 쓰고 있었는데 이쪽만 어긋나 있었다.
+            # 라우팅 자체는 request_policy의 provider.only와 allow_fallbacks=false가
+            # 고정하므로 여기서는 표기 차이만 흡수한다.
+            or str(row.get("provider") or "").casefold()
+            != expected_provider.casefold()
             or row.get("response_reasoning_present") is not False
             or row.get("reasoning_tokens") != 0
-            or str(row.get("finish_reason") or "") != "stop"
             or not isinstance(row.get("usage"), dict)
             or not str(row.get("request_id") or "").strip()
             or not _sha256_text(row.get("provider_response_sha256"))
         ):
             raise CanonicalRunValidationError(
                 f"Provider return does not prove strict successful execution "
+                f"at audit row {index}"
+            )
+        # provider가 200 본문 안에서 finish_reason="error"로 실패를 알리는 경우가
+        # 있다(전송 오류가 아니라 정상 응답 형식). 그 시도는 검증기가 거부하고
+        # 다음 시도가 채택되므로 오염된 본문이 실험에 들어가지 않는다. 지켜야 할
+        # 성질은 "모든 provider 반환이 깨끗했다"가 아니라 "채택된 응답은 전부
+        # 깨끗한 실행에서 나왔다"이므로, 채택된 시도에만 stop을 요구한다.
+        # 45일 완주 run에서 78,251건 중 1건이 이 경로였고(A083 2026-04-03/AM
+        # market_analysis, attempt 1 거부 → attempt 2 채택), 옛 검사는 그 1건
+        # 때문에 정상 run 전체를 publication_ready에서 탈락시켰다.
+        if (
+            str(physical.get("status") or "") == "accepted"
+            and str(row.get("finish_reason") or "") != "stop"
+        ):
+            raise CanonicalRunValidationError(
+                f"Accepted response came from a non-stop provider return "
                 f"at audit row {index}"
             )
 
