@@ -25,3 +25,17 @@ outputs/backup_splits_*/
 # 서브에이전트 판정/요약 작업 배치. 결과는 split JSON 에 이미 반영되어 있다.
 outputs/worklots/
 outputs/worklots_recheck/
+# v10 본실험 대용량 원시 로그. 비압축 합계 2.8GB 로 GitHub 파일당 100MB 제한을 넘는다.
+# 같은 경로의 .gz 만 커밋하며, 복원은 gunzip -k <파일>.gz 로 한다.
+outputs/logs/experiment_matrix_45day_v10/RN_COMM_OFF/.runtime/committed.db
+outputs/logs/experiment_matrix_45day_v10/RN_COMM_OFF/.runtime/runtime_sim.db
+outputs/logs/experiment_matrix_45day_v10/RN_COMM_OFF/agent_turns.jsonl
+outputs/logs/experiment_matrix_45day_v10/RN_COMM_OFF/openrouter_calls.jsonl
+outputs/logs/experiment_matrix_45day_v10/RN_COMM_ON/.runtime/committed.db
+outputs/logs/experiment_matrix_45day_v10/RN_COMM_ON/.runtime/runtime_sim.db
+outputs/logs/experiment_matrix_45day_v10/RN_COMM_ON/agent_turns.jsonl
+outputs/logs/experiment_matrix_45day_v10/RN_COMM_ON/community_events.jsonl
+outputs/logs/experiment_matrix_45day_v10/RN_COMM_ON/community_interactions.csv
+outputs/logs/experiment_matrix_45day_v10/RN_COMM_ON/community_logs.csv
+outputs/logs/experiment_matrix_45day_v10/RN_COMM_ON/openrouter_calls.jsonl
+outputs/logs/experiment_matrix_45day_v10/RN_COMM_ON/traces/community_exposure_trace.jsonl
