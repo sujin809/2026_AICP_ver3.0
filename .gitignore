@@ -39,3 +39,8 @@ outputs/logs/experiment_matrix_45day_v10/RN_COMM_ON/community_interactions.csv
 outputs/logs/experiment_matrix_45day_v10/RN_COMM_ON/community_logs.csv
 outputs/logs/experiment_matrix_45day_v10/RN_COMM_ON/openrouter_calls.jsonl
 outputs/logs/experiment_matrix_45day_v10/RN_COMM_ON/traces/community_exposure_trace.jsonl
+
+# analysis/community_belief_v10 — 재생성 가능한 중간 산출물 (2026-08-04)
+# panels: s0_*.py ~ s2_*.py 재실행으로 복원. embed_cache: 임베딩 재계산 약 40분.
+analysis/community_belief_v10/panels/
+analysis/community_belief_v10/embed_cache/
