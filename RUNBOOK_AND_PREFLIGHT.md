@@ -310,7 +310,7 @@ PYTHONDONTWRITEBYTECODE=1 python -m pytest -q
 - D2 선택 5 통과, 6 실패
 - 뉴스 D2 추가 검색 5건 통과, 6건 거부
 - 전역 Best 최대 5개와 결정론적 순위
-- post 본문 500자 통과, 501자 실패
+- post 본문 250자 통과, 251자 실패
 - D0 post/select/react 0, next-AM Best full body 정상
 - Best 작성자 자기 글 0, 6위 backfill 0
 - 다른 독자는 같은 Best를 정상 수신
@@ -435,7 +435,7 @@ canary는 본 cohort 100명을 유지하고 전체 run과 같은 input format/ha
 
 - same input / community-only diff
 - STB→analysis→decision→fill→post-fill LTB→PM community 순서와 row count
-- D0 passive Best, D1/D2 선택 상한, 500자, self-exclusion
+- D0 passive Best, D1/D2 선택 상한, 250자, self-exclusion
 - strict reasoning-off 실제 telemetry
 - provider/model 일치, fallback 0
 - fee 0

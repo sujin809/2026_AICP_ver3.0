@@ -223,10 +223,16 @@ class CommunityPolicyTests(unittest.TestCase):
         self.assertIn("selected_post_ids:exceeds_limit:1>0", errors)
 
     def test_post_body_boundary_is_not_silently_truncated(self) -> None:
-        body = "가" * 500
+        body = "가" * 250
         self.assertEqual(validate_post_body(body), body)
-        with self.assertRaisesRegex(CommunityValidationError, "500 characters"):
-            validate_post_body("가" * 501)
+        with self.assertRaisesRegex(CommunityValidationError, "250 characters"):
+            validate_post_body("가" * 251)
+
+    def test_posting_prompt_uses_the_same_250_character_limit(self) -> None:
+        prompt = load_prompt("posting_decision.txt")
+        self.assertIn("본문은 반드시 250자 이내로 작성하세요.", prompt)
+        self.assertIn("content는 250자를 넘으면 실패합니다.", prompt)
+        self.assertNotIn("500자", prompt)
 
     def test_legacy_database_write_rechecks_post_body_limit(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -236,20 +242,20 @@ class CommunityPolicyTests(unittest.TestCase):
                 1,
                 "2026-02-27",
                 "analysis",
-                "500 boundary",
-                "가" * 500,
+                "250 boundary",
+                "가" * 250,
             )
             self.assertGreater(post_id, 0)
-            self.assertEqual(len(community.get_post_content(post_id)["content"]), 500)
+            self.assertEqual(len(community.get_post_content(post_id)["content"]), 250)
 
-            with self.assertRaisesRegex(CommunityValidationError, "500 characters"):
+            with self.assertRaisesRegex(CommunityValidationError, "250 characters"):
                 community.save_post(
                     "A001",
                     1,
                     "2026-02-27",
                     "analysis",
-                    "501 rejected",
-                    "가" * 501,
+                    "251 rejected",
+                    "가" * 251,
                 )
 
     def test_neutral_reaction_is_preserved_as_none_for_analysis(self) -> None:

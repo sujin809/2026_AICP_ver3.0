@@ -3,7 +3,7 @@ from twinmarket_kr.llm.validation import LLMValidationError
 
 COMMUNITY_DEPTH1_READ_LIMIT = 5
 COMMUNITY_DEPTH2_READ_LIMIT = 5
-COMMUNITY_POST_BODY_MAX_CHARS = 500
+COMMUNITY_POST_BODY_MAX_CHARS = 250
 
 
 class CommunityValidationError(LLMValidationError):

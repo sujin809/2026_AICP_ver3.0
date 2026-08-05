@@ -1,8 +1,10 @@
 # Trading Direction Validation
 
 삼성전자 실제 투자자별 순거래 데이터와 TwinMarket Korea의 canonical 완료 run을
-일별 순매수/순매도 방향으로 비교한다. 이 검증기는 publication-ready run만
-받으며, run 내부에는 어떤 파생 파일도 쓰지 않는다.
+일별 순매수/순매도 방향으로 비교한다. 기본 해석 대상은 개인 투자자
+`Individuals`이며, `Subtotal-Institutions` 기관 투자자 방향 비교도 같은
+산출물에 함께 기록한다. 이 검증기는 publication-ready run만 받으며, run 내부에는
+어떤 파생 파일도 쓰지 않는다.
 
 ## 입력
 
@@ -40,8 +42,8 @@ python validation/validate_trading_direction.py \
 | `daily_comparison_volume.csv` | 거래량 기준 일별 비교 |
 | `normalized_comparison_value.csv` | 거래대금 정규화 비교 |
 | `normalized_comparison_volume.csv` | 거래량 정규화 비교 |
-| `summary_metrics.json` | 방향 일치율, balanced accuracy, 상관계수, baseline 비교 |
-| `validation_report.pdf` | PDF 보고서 |
+| `summary_metrics.json` | 개인·기관 방향 일치율, balanced accuracy, 상관계수, baseline 비교 |
+| `validation_report.pdf` | 개인·기관 비교 PDF 보고서 |
 
 이 경로가 `--run-dir` 내부이거나 symlink를 통해 내부로 해석되면 실행은
 중단한다. 그래야 signed artifact tree와 canonical run의 재검증 가능성이
@@ -50,7 +52,8 @@ python validation/validate_trading_direction.py \
 ## 기준
 
 - 시뮬레이션 체결에서 `buy`는 양수, `sell`은 음수로 환산한다.
-- AM+PM gross signed fill을 일별 합산해 실제 `Individuals` 방향과 1차 비교한다.
+- AM+PM gross signed fill을 일별 합산해 실제 `Individuals` 방향과 1차 비교하고,
+  `Subtotal-Institutions` 방향 비교를 보조 검증으로 함께 보고한다.
 - run metadata의 승인된 거래일 집합과 체결 ledger가 정확히 일치해야 하며,
   단순 날짜 교집합으로 조용히 축소하지 않는다.
 - 삼성전자 baseline 기본 설정은 봉인된 burn-in과 같은 초기 3거래일 제외다.

@@ -823,8 +823,8 @@ flowchart TD
   `community_posts`의 unique index `idx_community_posts_agent_date(agent_id, date)`로
   DB에서 함께 강제한다. table 정의에 `UNIQUE`를 넣으면
   `CREATE TABLE IF NOT EXISTS` 때문에 신규 DB만 제약을 갖게 되므로 index를 쓴다.
-- 본문은 최대 500자다.
-- 500자는 허용, 501자는 validation fail이다.
+- 본문은 최대 250자다.
+- 250자는 허용, 251자는 validation fail이다.
 - 초과 본문을 자동으로 자르지 않는다.
 - post는 post-fill LTB, LTB-linked view_change, structured PM fill을 활용한다.
 - post 자체는 agent의 표현이며 fill 사실과 다르게 말할 수 있다.
@@ -1359,7 +1359,7 @@ cohort·동일 call policy·동일 schedule이 검증된 뒤에만 community tre
 - outcome 조기 노출·중복 소비
 - D0 posting/select/react
 - D1 6개 또는 D2 6개 선택
-- post 501자
+- post 251자
 - Best 자기 글 delivery
 - title-only 본문 유출
 - reasoning effort가 none이 아님
@@ -1385,7 +1385,7 @@ cohort·동일 call policy·동일 schedule이 검증된 뒤에만 community tre
 | Git·sealed news | 확인 | 수진 기준 HEAD와 Git tracked news blob 일치. 90 event, 760 slot, shortage 59건 |
 | main news reader | 무과금 PASS | `05 -> simulation.py -> NewsAgent`가 sealed event ID를 직접 사용. D0 전체 headline, D1/D2 전체 제공 summary, D2 cutoff-safe 최근 7일 최대 5건. legacy pkl/CSV/JSON-split runtime reader는 제거됨 |
 | 뉴스 quota | 무과금 PASS | sealer가 종목 5·섹터 3·경제 2를 독립 적용하고 카테고리 간 backfill을 금지. 1~9건은 shortage 기록 후 실행 지속, 0건은 입력 봉인 실패. 재봉인 중 news bytes는 불변 |
-| Community 정책 | 무과금 PASS | D0 수동 참여 0/Best 본문 수신, D1·D2 선택 최대 5, 글 500자, full-body Best, self-exclusion/no-backfill과 exposure 로그가 공통 모듈에 연결됨. badge 3종은 §12.9 근거로 계산·저장·노출 전부 제거. agent-PM 1글은 unique index로 DB 강제. Best∩선택 중복 글은 본문 1회 직렬화 + 두 exposure ID 모두 인용 가능 |
+| Community 정책 | 무과금 PASS | D0 수동 참여 0/Best 본문 수신, D1·D2 선택 최대 5, 글 250자, full-body Best, self-exclusion/no-backfill과 exposure 로그가 공통 모듈에 연결됨. badge 3종은 §12.9 근거로 계산·저장·노출 전부 제거. agent-PM 1글은 unique index로 DB 강제. Best∩선택 중복 글은 본문 1회 직렬화 + 두 exposure ID 모두 인용 가능 |
 | STB/LTB·decision/fill | 무과금 PASS | 별도 STB/LTB prompt와 `previous LTB + current STB -> analysis -> decision -> fill -> post-fill LTB` 계보가 공통 DB에 연결됨. prompt wiring 회귀 포함 전체 suite PASS |
 | outcome | 무과금 PASS | next-turn/H1/H5가 frozen schedule의 due event에서만 dim_6에 1회 소비되고 terminal right-censor 처리됨 |
 | event checkpoint·journal | 무과금 PASS | `EventCheckpointRuntime`, run signature, `.runtime/committed.db`, response journal, running rollback과 commit-decided recovery가 `05` 기본 경로에 연결됨. provider JSON은 최초 수신부터 canonical key order로 정규화하고, 1 agent/45거래일 OFF/ON 실제 중단·재개 offline 검증과 failpoint/resume 회귀를 통과함 |
@@ -1444,7 +1444,7 @@ P0는 live 실행 전에 모두 해결해야 한다.
 | 우선순위 | 항목 | 의미 |
 | --- | --- | --- |
 | P0 | final tree 안정화 | **무과금 범위 완료**: active 경로의 legacy 참조·중복 schema·깨진 문서 link를 검사하고 과거 분석/validation artifact를 archive로 격리. `preparation/GENERATED_INPUT_CONTRACT.md`는 활성 코드 참조가 0이고 현행 D2 profile 정책과 충돌해 `archive/legacy_docs/`로 격리함. live freeze는 별도 승인 record가 필요 |
-| P0 | 전체 무과금 회귀 | **완료**: 전체 `pytest -q` 167 passed, 17 subtests passed; official profile 1 agent/45거래일 OFF/ON 실제 중단·재개 offline 검증과 checkpoint/resume 회귀를 기록. badge 제거·exposure relation·unique index 변경 뒤 새 manifest로 45거래일 90 event offline E2E를 OFF(1 agent)·ON(3 agent)·ON(7 agent, D2 포함)으로 재실행. OFF는 community 원장 4종 0행, ON은 agent-PM 1글·자기 글 반응 0·score 정합·agent×PM 격자·500자·Best 예정=실제 delivery·마지막 PM right_censored·`title_only`/`full_body` 분리·D2만 detailed profile 수신·D1 profile 누출 0·badge 흔적 0을 모두 통과 |
+| P0 | 전체 무과금 회귀 | **재검증 중**: 과거 500자 정책에서는 전체 `pytest -q` 167 passed와 45거래일 OFF/ON 중단·재개 E2E를 완료했다. 현재 250자 정책은 관련 55 tests·27 subtests와 임시 재봉인 profile의 7 agent(D2 포함) 1거래일 ON E2E를 통과했고, 생성된 post 6개의 최대 길이는 45자·250자 초과는 0개였다. 공식 profile 재봉인 뒤 전체 suite를 다시 통과해야 완료다. |
 | P0 | 최종 재봉인 | **완료**: production prompt·code·persona projection hash를 candidate에 반영하고, news byte equality 확인 뒤 official selection/review를 갱신 |
 | P0 | reasoning-off live canary | **대기**: 승인된 1회 유료 호출로 provider/model, request reasoning 객체, 빈 reasoning, reasoning token 0을 증명. badge 제거로 prompt·schema·policy가 바뀌었으므로 RUNBOOK §10에 따라 이전 manifest 기준 canary는 재사용할 수 없고 새 manifest로 수행한다 |
 | P0 | report final rehearsal | **무과금 범위 완료**: `99_validate`/방향성 검증의 external output guard와 3종 fixture PDF를 run 밖 `derived/` 경로에서 QA. real complete run report는 live 본실험 뒤 생성 |

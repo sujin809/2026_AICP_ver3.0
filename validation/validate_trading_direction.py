@@ -34,6 +34,13 @@ ACTUAL_INVESTOR_COLUMNS = [
     "Total of foreign",
     "Other corporations",
 ]
+PRIMARY_TARGET_COLUMN = "Individuals"
+INSTITUTION_TARGET_COLUMN = "Subtotal-Institutions"
+TARGET_INVESTOR_COLUMNS = [PRIMARY_TARGET_COLUMN, INSTITUTION_TARGET_COLUMN]
+TARGET_LABELS = {
+    PRIMARY_TARGET_COLUMN: "개인",
+    INSTITUTION_TARGET_COLUMN: "기관",
+}
 FONT_PATHS = [
     Path("/System/Library/Fonts/Supplemental/AppleGothic.ttf"),
     Path("/System/Library/Fonts/Supplemental/Arial Unicode.ttf"),
@@ -89,6 +96,16 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Exclude the first N approved simulation trading days after exact "
             "coverage validation. The Samsung baseline uses 3."
+        ),
+    )
+    parser.add_argument(
+        "--skip-publication-ready-check",
+        action="store_true",
+        help=(
+            "Use only for archived raw-log bundles whose compressed runtime DB "
+            "or response journal is not present in publication-ready form. The "
+            "fill ledger/calendar checks in this script still run, and the "
+            "summary records that canonical integrity was not revalidated."
         ),
     )
     return parser.parse_args()
@@ -583,7 +600,12 @@ def build_comparison_rows(
         for column in ACTUAL_INVESTOR_COLUMNS:
             row[column] = actual_row[column]
             row[f"{column}_direction"] = direction_label(actual_row[column])
-        row["llm_matches_individuals"] = int(sign(sim[sim_key]) == sign(actual_row["Individuals"]))
+        row["llm_matches_individuals"] = int(
+            sign(sim[sim_key]) == sign(actual_row[PRIMARY_TARGET_COLUMN])
+        )
+        row["llm_matches_institutions"] = int(
+            sign(sim[sim_key]) == sign(actual_row[INSTITUTION_TARGET_COLUMN])
+        )
         rows.append(row)
     return rows
 
@@ -646,11 +668,14 @@ def summarize_dimension(
     full_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     llm_values = [num(row["llm_net"]) for row in rows]
-    actual_individuals = [num(row["Individuals"]) for row in rows]
+    actual_individuals = [num(row[PRIMARY_TARGET_COLUMN]) for row in rows]
+    actual_institutions = [num(row[INSTITUTION_TARGET_COLUMN]) for row in rows]
     market_returns = [num(row.get("market_return")) for row in rows]
     primary_metrics = compute_direction_metrics(llm_values, actual_individuals)
     bundle = metric_bundle(llm_values, actual_individuals)
+    institution_bundle = metric_bundle(llm_values, actual_institutions)
     baselines = baseline_metrics(actual_individuals, market_returns)
+    institution_baselines = baseline_metrics(actual_institutions, market_returns)
     if full_rows is not None:
         baselines.update(
             _lag_baselines_for_evaluation(
@@ -668,7 +693,13 @@ def summarize_dimension(
             "note": "누적 Pearson은 상승장 + 단일가 체결 구조상 구조적 역전이 발생할 수 있음",
         },
         "llm_vs_individuals": bundle,
+        "llm_vs_institutions": institution_bundle,
+        "target_metrics": {
+            PRIMARY_TARGET_COLUMN: bundle,
+            INSTITUTION_TARGET_COLUMN: institution_bundle,
+        },
         "baselines_vs_individuals": baselines,
+        "baselines_vs_institutions": institution_baselines,
     }
     return summary
 
@@ -686,6 +717,7 @@ def build_normalized_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "date": row["date"],
             "llm_direction": row["llm_direction"],
             "llm_matches_individuals": row["llm_matches_individuals"],
+            "llm_matches_institutions": row["llm_matches_institutions"],
         }
         for name in series_names:
             normalized[f"{name}_raw"] = raw_series[name][index]
@@ -698,7 +730,12 @@ def build_normalized_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def normalized_fieldnames() -> list[str]:
     series_names = ["llm_net", *ACTUAL_INVESTOR_COLUMNS]
-    fields = ["date", "llm_direction", "llm_matches_individuals"]
+    fields = [
+        "date",
+        "llm_direction",
+        "llm_matches_individuals",
+        "llm_matches_institutions",
+    ]
     for name in series_names:
         fields.extend(
             [
@@ -805,19 +842,23 @@ def table(data: list[list[Any]], widths: list[float] | None = None) -> Table:
 
 def metric_table(title: str, summary: dict[str, Any], styles: dict[str, ParagraphStyle]) -> list[Any]:
     rows = [["비교", "일수", "방향", "Balanced", "Buy recall", "Sell recall", "MaxAbs r", "누적 r"]]
-    primary = summary["llm_vs_individuals"]
-    rows.append(
-        [
-            "LLM vs 개인",
-            primary["days"],
-            pct(primary["direction_match_rate"]),
-            pct(primary["balanced_accuracy"]),
-            pct(primary["buy_recall"]),
-            pct(primary["sell_recall"]),
-            score_text(primary["max_abs_normalized"]["pearson_correlation"]),
-            score_text(primary["cumulative_max_abs_normalized"]["pearson_correlation"]),
-        ]
-    )
+    for key, label in (
+        ("llm_vs_individuals", "LLM vs 개인"),
+        ("llm_vs_institutions", "LLM vs 기관"),
+    ):
+        primary = summary[key]
+        rows.append(
+            [
+                label,
+                primary["days"],
+                pct(primary["direction_match_rate"]),
+                pct(primary["balanced_accuracy"]),
+                pct(primary["buy_recall"]),
+                pct(primary["sell_recall"]),
+                score_text(primary["max_abs_normalized"]["pearson_correlation"]),
+                score_text(primary["cumulative_max_abs_normalized"]["pearson_correlation"]),
+            ]
+        )
     return [
         para(title, styles["KHeading2"]),
         table(
@@ -976,33 +1017,43 @@ def build_report(
         q_primary = summary["volume"]["llm_vs_individuals"]
         story.append(
             para(
-                "기본 검증은 LLM 에이전트 전체의 일별 순매수/순매도 sign이 실제 개인 투자자(Individuals)의 sign과 "
-                "일치하는지 본다. 1차 지표는 방향 일치율, balanced accuracy, buy/sell recall이며, naive baseline과 "
-                "같은 날짜 구간에서 비교한다. 상관계수와 코사인 유사도는 강도 패턴을 보는 2차 지표로 유지한다.",
+                "기본 검증은 LLM 에이전트 전체의 일별 순매수/순매도 sign을 실제 개인 투자자(Individuals)와 "
+                "기관 투자자(Subtotal-Institutions)의 sign에 각각 비교한다. 1차 지표는 방향 일치율, "
+                "balanced accuracy, buy/sell recall이며, naive baseline과 같은 날짜 구간에서 비교한다. "
+                "상관계수와 코사인 유사도는 강도 패턴을 보는 2차 지표로 유지한다.",
                 styles["KBody"],
             )
         )
+        v_inst = summary["value"]["llm_vs_institutions"]
+        q_inst = summary["volume"]["llm_vs_institutions"]
         overview = [
             ["항목", "Value", "Volume"],
             ["겹치는 거래일", summary["value"]["overlap_days"], summary["volume"]["overlap_days"]],
             ["LLM vs 개인 방향 일치율", pct(v_primary["direction_match_rate"]), pct(q_primary["direction_match_rate"])],
-            ["Balanced accuracy", pct(v_primary["balanced_accuracy"]), pct(q_primary["balanced_accuracy"])],
-            ["Buy recall", pct(v_primary["buy_recall"]), pct(q_primary["buy_recall"])],
-            ["Sell recall", pct(v_primary["sell_recall"]), pct(q_primary["sell_recall"])],
+            ["LLM vs 기관 방향 일치율", pct(v_inst["direction_match_rate"]), pct(q_inst["direction_match_rate"])],
+            ["개인 Balanced accuracy", pct(v_primary["balanced_accuracy"]), pct(q_primary["balanced_accuracy"])],
+            ["기관 Balanced accuracy", pct(v_inst["balanced_accuracy"]), pct(q_inst["balanced_accuracy"])],
+            ["개인 Buy/Sell recall", f"{pct(v_primary['buy_recall'])} / {pct(v_primary['sell_recall'])}", f"{pct(q_primary['buy_recall'])} / {pct(q_primary['sell_recall'])}"],
+            ["기관 Buy/Sell recall", f"{pct(v_inst['buy_recall'])} / {pct(v_inst['sell_recall'])}", f"{pct(q_inst['buy_recall'])} / {pct(q_inst['sell_recall'])}"],
             [
-                "MaxAbs 정규화 상관계수",
+                "개인 MaxAbs 정규화 상관계수",
                 score_text(v_primary["max_abs_normalized"]["pearson_correlation"]),
                 score_text(q_primary["max_abs_normalized"]["pearson_correlation"]),
             ],
             [
-                "MaxAbs 정규화 코사인",
-                score_text(v_primary["max_abs_normalized"]["cosine_similarity"]),
-                score_text(q_primary["max_abs_normalized"]["cosine_similarity"]),
+                "기관 MaxAbs 정규화 상관계수",
+                score_text(v_inst["max_abs_normalized"]["pearson_correlation"]),
+                score_text(q_inst["max_abs_normalized"]["pearson_correlation"]),
             ],
             [
-                "누적 정규화 상관계수",
+                "개인 누적 정규화 상관계수",
                 score_text(v_primary["cumulative_max_abs_normalized"]["pearson_correlation"]),
                 score_text(q_primary["cumulative_max_abs_normalized"]["pearson_correlation"]),
+            ],
+            [
+                "기관 누적 정규화 상관계수",
+                score_text(v_inst["cumulative_max_abs_normalized"]["pearson_correlation"]),
+                score_text(q_inst["cumulative_max_abs_normalized"]["pearson_correlation"]),
             ],
         ]
         story.append(table([[para(c, styles["KSmall"]) for c in row] for row in overview], [50 * mm, 55 * mm, 55 * mm]))
@@ -1010,15 +1061,18 @@ def build_report(
         dates = [row["date"] for row in value_rows]
         value_llm = [num(row["llm_net"]) for row in value_rows]
         value_individuals = [num(row["Individuals"]) for row in value_rows]
+        value_institutions = [num(row[INSTITUTION_TARGET_COLUMN]) for row in value_rows]
         volume_llm = [num(row["llm_net"]) for row in volume_rows]
         volume_individuals = [num(row["Individuals"]) for row in volume_rows]
+        volume_institutions = [num(row[INSTITUTION_TARGET_COLUMN]) for row in volume_rows]
         story.append(
             NormalizedLineChart(
-                "Value MaxAbs 정규화 순거래 흐름: LLM vs 개인",
+                "Value MaxAbs 정규화 순거래 흐름: LLM vs 개인·기관",
                 dates,
                 [
                     ("LLM", max_abs_normalize(value_llm), colors.HexColor("#2563eb")),
                     ("Individuals", max_abs_normalize(value_individuals), colors.HexColor("#16a34a")),
+                    ("Institutions", max_abs_normalize(value_institutions), colors.HexColor("#dc2626")),
                 ],
                 170 * mm,
             )
@@ -1026,11 +1080,12 @@ def build_report(
         story.append(Spacer(1, 4 * mm))
         story.append(
             NormalizedLineChart(
-                "Volume MaxAbs 정규화 순거래 흐름: LLM vs 개인",
+                "Volume MaxAbs 정규화 순거래 흐름: LLM vs 개인·기관",
                 [row["date"] for row in volume_rows],
                 [
                     ("LLM", max_abs_normalize(volume_llm), colors.HexColor("#2563eb")),
                     ("Individuals", max_abs_normalize(volume_individuals), colors.HexColor("#16a34a")),
+                    ("Institutions", max_abs_normalize(volume_institutions), colors.HexColor("#dc2626")),
                 ],
                 170 * mm,
             )
@@ -1043,6 +1098,8 @@ def build_report(
         story.extend(baseline_table("Volume baseline 비교", summary["volume"], styles))
         story.extend(confusion_table("Value confusion matrix: LLM vs Individuals", v_primary, styles))
         story.extend(confusion_table("Volume confusion matrix: LLM vs Individuals", q_primary, styles))
+        story.extend(confusion_table("Value confusion matrix: LLM vs Institutions", v_inst, styles))
+        story.extend(confusion_table("Volume confusion matrix: LLM vs Institutions", q_inst, styles))
 
         exploratory = summary.get("exploratory_subturns") or {}
         if exploratory:
@@ -1087,7 +1144,7 @@ def build_report(
 
         story.append(PageBreak())
         story.append(para("4. 일별 비교 샘플", styles["KHeading1"]))
-        sample_rows = [["날짜", "LLM Value", "개인 Value", "일치", "LLM Volume", "개인 Volume", "일치"]]
+        sample_rows = [["날짜", "LLM Value", "개인 Value", "기관 Value", "일치(개/기)", "LLM Volume", "개인 Volume", "기관 Volume", "일치(개/기)"]]
         volume_by_date = {row["date"]: row for row in volume_rows}
         for row in value_rows[:30]:
             qrow = volume_by_date[row["date"]]
@@ -1096,16 +1153,18 @@ def build_report(
                     row["date"],
                     f"{direction_label_ko(num(row['llm_net']))}\n{fmt_int(row['llm_net'])}",
                     f"{direction_label_ko(num(row['Individuals']))}\n{fmt_int(row['Individuals'])}",
-                    "Y" if row["llm_matches_individuals"] else "N",
+                    f"{direction_label_ko(num(row[INSTITUTION_TARGET_COLUMN]))}\n{fmt_int(row[INSTITUTION_TARGET_COLUMN])}",
+                    f"{'Y' if row['llm_matches_individuals'] else 'N'} / {'Y' if row['llm_matches_institutions'] else 'N'}",
                     f"{direction_label_ko(num(qrow['llm_net']))}\n{fmt_int(qrow['llm_net'])}",
                     f"{direction_label_ko(num(qrow['Individuals']))}\n{fmt_int(qrow['Individuals'])}",
-                    "Y" if qrow["llm_matches_individuals"] else "N",
+                    f"{direction_label_ko(num(qrow[INSTITUTION_TARGET_COLUMN]))}\n{fmt_int(qrow[INSTITUTION_TARGET_COLUMN])}",
+                    f"{'Y' if qrow['llm_matches_individuals'] else 'N'} / {'Y' if qrow['llm_matches_institutions'] else 'N'}",
                 ]
             )
         story.append(
             table(
                 [[para(c, styles["KSmall"]) for c in row] for row in sample_rows],
-                [23 * mm, 27 * mm, 31 * mm, 12 * mm, 27 * mm, 31 * mm, 12 * mm],
+                [20 * mm, 22 * mm, 25 * mm, 25 * mm, 18 * mm, 22 * mm, 25 * mm, 25 * mm, 18 * mm],
             )
         )
 
@@ -1127,8 +1186,12 @@ def build_report(
 def make_interpretation(summary: dict[str, Any]) -> str:
     value_match = summary["value"]["llm_vs_individuals"]["direction_match_rate"]
     volume_match = summary["volume"]["llm_vs_individuals"]["direction_match_rate"]
+    inst_value_match = summary["value"]["llm_vs_institutions"]["direction_match_rate"]
+    inst_volume_match = summary["volume"]["llm_vs_institutions"]["direction_match_rate"]
     value_balanced = summary["value"]["llm_vs_individuals"]["balanced_accuracy"]
     volume_balanced = summary["volume"]["llm_vs_individuals"]["balanced_accuracy"]
+    inst_value_balanced = summary["value"]["llm_vs_institutions"]["balanced_accuracy"]
+    inst_volume_balanced = summary["volume"]["llm_vs_institutions"]["balanced_accuracy"]
     value_sell_recall = summary["value"]["llm_vs_individuals"]["sell_recall"]
     volume_sell_recall = summary["volume"]["llm_vs_individuals"]["sell_recall"]
     value_corr = summary["value"]["llm_vs_individuals"]["max_abs_normalized"]["pearson_correlation"]
@@ -1139,10 +1202,13 @@ def make_interpretation(summary: dict[str, Any]) -> str:
         f"LLM 에이전트와 실제 개인 투자자의 방향 일치율은 Value {pct(value_match)}, Volume {pct(volume_match)}이고, "
         f"balanced accuracy는 Value {pct(value_balanced)}, Volume {pct(volume_balanced)}이다. "
         f"sell recall은 Value {pct(value_sell_recall)}, Volume {pct(volume_sell_recall)}이다. "
+        f"기관 투자자와의 방향 일치율은 Value {pct(inst_value_match)}, Volume {pct(inst_volume_match)}이고, "
+        f"기관 기준 balanced accuracy는 Value {pct(inst_value_balanced)}, Volume {pct(inst_volume_balanced)}이다. "
         f"MaxAbs 정규화 상관계수는 Value {score_text(value_corr)}, Volume {score_text(volume_corr)}이며, "
         f"누적 정규화 상관계수는 Value {score_text(value_cumulative_corr)}, Volume {score_text(volume_cumulative_corr)}이다. "
         "방향 일치율이 높고 정규화 상관계수/코사인 유사도가 양수로 안정적이면 실제 개인 투자자 흐름을 시뮬레이션이 어느 정도 "
-        "재현한다고 해석할 수 있다."
+        "재현한다고 해석할 수 있다. 기관 비교는 같은 LLM 결과가 다른 투자자 집단의 순거래 방향과 더 가까운지 확인하는 "
+        "보조 검증이다."
     )
 
 
@@ -1151,7 +1217,17 @@ def main() -> None:
     try:
         if args.skip_initial_days < 0:
             raise ValueError("--skip-initial-days must be non-negative")
-        require_publication_ready_run(args.run_dir)
+        run_integrity_check: dict[str, Any]
+        if args.skip_publication_ready_check:
+            run_integrity_check = {
+                "status": "skipped",
+                "reason": (
+                    "explicit --skip-publication-ready-check; this report is "
+                    "derived from run-local fill and actual-investor CSV files"
+                ),
+            }
+        else:
+            run_integrity_check = require_publication_ready_run(args.run_dir)
         actual_value = load_actual(args.actual_value)
         actual_volume = load_actual(args.actual_volume)
         run_id, simulation, fill_audit = load_simulation(
@@ -1283,6 +1359,7 @@ def main() -> None:
             "market_return",
             *[item for column in ACTUAL_INVESTOR_COLUMNS for item in (column, f"{column}_direction")],
             "llm_matches_individuals",
+            "llm_matches_institutions",
         ]
         write_csv(output_dir / "daily_comparison_value.csv", value_rows, fieldnames)
         write_csv(output_dir / "daily_comparison_volume.csv", volume_rows, fieldnames)
@@ -1306,6 +1383,7 @@ def main() -> None:
             "evaluation_dates": [row["date"] for row in value_rows],
             "evaluation_policy": "approved_calendar_then_fixed_burn_in_mask",
             "primary_trade_aggregation": "daily_am_plus_pm_gross_signed_fill",
+            "run_integrity_check": run_integrity_check,
             "fill_completeness": {
                 "agent_count": len(agent_ids),
                 "expected_fill_count": len(expected_agent_events),
@@ -1355,6 +1433,14 @@ def main() -> None:
         summary["primary_metrics"] = {
             "value": summary["value"]["primary_metrics"],
             "volume": summary["volume"]["primary_metrics"],
+            "value_vs_institutions": compute_direction_metrics(
+                [num(row["llm_net"]) for row in value_rows],
+                [num(row[INSTITUTION_TARGET_COLUMN]) for row in value_rows],
+            ),
+            "volume_vs_institutions": compute_direction_metrics(
+                [num(row["llm_net"]) for row in volume_rows],
+                [num(row[INSTITUTION_TARGET_COLUMN]) for row in volume_rows],
+            ),
         }
         summary["reference_metrics"] = {
             "value": summary["value"]["reference_metrics"],
