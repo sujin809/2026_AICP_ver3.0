@@ -62,7 +62,11 @@ LOCATION_WEIGHTS = {
 }
 
 PERSONA_RENDERER_ID = (
-    "integrated-persona-v2-legacy-content-depth-repaired-nfc-lf"
+    # Distribution-matched TwinMarket cohort: persona text is derived only from the
+    # six behavioural axes + news_depth + initial cash. Demographic slot fields
+    # (gender/age/location) are no longer rendered. New ID so a cohort sealed under
+    # the old renderer cannot silently validate against this one.
+    "twinmarket-dist-matched-7axis-ko-v1"
 )
 STRUCTURED_PERSONA_FIELDS = (
     "agent_id",
@@ -141,15 +145,42 @@ def assign_location(rng: random.Random) -> str:
 
 
 def assign_news_depth(index: int, total: int) -> int:
+    """Deprecated. Kept only so old callers fail loudly instead of silently
+    reintroducing the slot-index confound.
+
+    The previous implementation gave depth 2 to the LAST ``round(total * ratio)``
+    slot indices. Because the slot table is ordered by age, that put every deep
+    reader in the oldest cohort -- news depth was confounded with age. Depth is now
+    drawn at random by ``assign_news_depths``.
+    """
+
+    raise NotImplementedError(
+        "assign_news_depth is retired; use assign_news_depths(agents, rng)"
+    )
+
+
+def assign_news_depths(agents: list[dict], rng: random.Random) -> None:
+    """Assign depth 0/1/2 at random, hitting the design counts exactly.
+
+    Random rather than index-based so depth stays independent of every other
+    persona axis; the counts are exact so the sealed design split is preserved.
+    """
+
+    total = len(agents)
     n_depth2 = round(total * config.NEWS_DEPTH2_RATIO)
-    return 2 if index >= total - n_depth2 else 1
+    n_depth0 = min(config.NEWS_DEPTH0_COUNT, total - n_depth2)
+    pool = [2] * n_depth2 + [0] * n_depth0 + [1] * (total - n_depth2 - n_depth0)
+    rng.shuffle(pool)
+    for agent, depth in zip(agents, pool):
+        agent["news_depth"] = depth
 
 
 def assign_depth0_agents(agents: list[dict], rng: random.Random) -> None:
-    depth1_agents = [agent for agent in agents if int(agent["news_depth"]) == 1]
-    count = min(config.NEWS_DEPTH0_COUNT, len(depth1_agents))
-    for agent in rng.sample(depth1_agents, count):
-        agent["news_depth"] = 0
+    """Deprecated. ``assign_news_depths`` now draws 0/1/2 in one shot."""
+
+    raise NotImplementedError(
+        "assign_depth0_agents is retired; use assign_news_depths(agents, rng)"
+    )
 
 
 def generate_persona_prompt(
@@ -164,35 +195,66 @@ def generate_persona_prompt(
     here keeps the 30/55/15 structured depth map as the sole authority.
     """
 
-    gender_desc = {"male": "남성", "female": "여성"}
     user_type_desc = {
-        "ordinary": "일반 개인투자자",
-        "small_influencer": "팔로워가 적은 투자 인플루언서",
-        "big_influencer": "영향력이 큰 투자 인플루언서",
+        "ordinary": "당신은 팔로워가 많지 않은 평범한 개인 투자자다.",
+        "small_influencer": "당신은 어느 정도 팬을 보유한 소규모 인플루언서다.",
+        "big_influencer": "당신은 널리 주목받는 대형 인플루언서다.",
     }
     disposition_desc = {
-        "high": "수익이 나면 빠르게 매도하고 손실 시 추가 매수하는 경향이 강합니다",
-        "medium": "수익과 손실 상황 모두에서 비교적 균형 잡힌 판단을 하는 편입니다",
-        "low": "수익은 오래 보유하고 손실 시 이성적으로 손절하는 편입니다",
+        "high": (
+            "당신은 보유 자산이 10% 넘게 오르면 곧바로 팔아 이익을 확정한다. "
+            "반대로 보유 자산이 하락하면 한번 걸어보는 쪽을 택해, 스스로 유망하다고 "
+            "본 자산에 대해서는 포지션 위험을 무시하고 떨어질수록 더 사들인다."
+        ),
+        "medium": (
+            "당신은 보유 자산이 10% 이상 오르면 매도를 고려하고, 20% 오르면 전량 "
+            "정리해 이익을 확정하는 편이다. 보유 자산이 하락하면 즉시 분석해서 한번 "
+            "걸어보며 물타기를 계속할지 아니면 손절매할지를 판단한다."
+        ),
+        "low": (
+            "당신은 보유 자산이 20% 오른 뒤에는 이익을 확정할 매도 시점을 제때 "
+            "살핀다. 보유 자산이 10% 넘게 하락하면 즉시 이성적으로 분석해 손절매할지를 "
+            "판단한다."
+        ),
     }
     lottery_desc = {
-        "high": "고위험 고수익 기회를 적극적으로 선호합니다",
-        "medium": "적정 수준의 위험을 수용합니다",
-        "low": "안정적이고 검증된 자산을 선호합니다",
+        "high": (
+            "당신은 '복권형' 자산에 투자하기를 특히 좋아해서, 위험이 크지만 잠재 "
+            "수익이 막대한 자산, 그중에서도 최근 급등한 자산을 고르는 경향이 있으며 "
+            "하룻밤에 큰돈을 벌기를 기대한다."
+        ),
+        "medium": (
+            "당신은 최근 급등한 '복권형' 자산에 이따금 자금 일부를 넣어, "
+            "포트폴리오에 약간의 자극과 잠재 수익을 더하려 한다."
+        ),
+        "low": (
+            "시장에는 최근 급등한 '복권형' 자산이 이따금 등장하지만, 그런 자산은 "
+            "당신의 투자 판단에 거의 영향을 주지 않는다."
+        ),
     }
     return_desc = {
-        "high": "과거 투자 성과가 좋은 편입니다",
-        "medium": "과거 투자 성과가 평균적인 편입니다",
-        "low": "과거 투자 성과가 낮은 편입니다",
-    }
-    strategy_desc = {
-        "technical": "기술적 지표, 추세, 거래량, 이동평균, 돌파 신호를 기반으로 판단합니다",
-        "value": "PE/PB 등 가치평가 지표, 내재가치, 성장성, 저평가 여부를 기반으로 판단합니다",
+        "high": "당신의 포트폴리오는 과거에 뛰어난 성과를 냈고, 총투자수익률이 시장 평균을 웃돈다.",
+        "medium": "당신의 포트폴리오는 총투자수익률이 중간 수준으로, 시장에서 중위권에 있다.",
+        "low": "당신의 포트폴리오는 과거 총투자수익률이 다소 낮아 시장 평균에 이르지 못했다.",
     }
     underdiv_desc = {
-        "low": "비교적 잘 분산된 포트폴리오를 유지하는 편입니다",
-        "medium": "특정 종목에 다소 집중하는 성향이 있습니다",
-        "high": "특정 종목에 매우 집중하는 성향이 있습니다",
+        "medium": "당신은 여러 종목에 투자를 분산해 위험을 낮추는 편이다.",
+        "low": (
+            "당신은 투자를 집중해 유망하다고 보는 특정 종목에 크게 베팅하는 편이며, "
+            "그래야만 두둑한 수익을 얻을 수 있다고 믿는다."
+        ),
+    }
+    strategy_desc = {
+        "technical": (
+            "기술적 분석 투자자로서 당신은 단기 시장 변동에서 이익을 얻는 데 "
+            "집중한다. 당신의 목표는 기술적 지표 분석과 시장 추세 예측을 통해 빠르고 "
+            "효율적인 매매 판단을 내리는 것이다."
+        ),
+        "value": (
+            "기본적 분석 투자자로서 당신은 자산의 내재가치와 성장성을 파악하는 데 "
+            "집중한다. 당신의 목표는 종목이 저평가되었을 때 매수하고 고평가되었을 때 "
+            "매도하는 것이다. 당신은 기술적 지표에는 거의 주의를 기울이지 않는다."
+        ),
     }
     depth_desc = {
         0: (
@@ -211,8 +273,10 @@ def generate_persona_prompt(
             "7일 범위에서 추가 뉴스 최대 5건을 탐색하는 심층 탐색형입니다."
         ),
     }
+    # gender/age/location are deliberately absent: the cohort is matched to
+    # TwinMarket's behavioural distribution, not to a demographic slot table, so
+    # those columns carry a sentinel and must never reach the prompt.
     required_codes = {
-        "gender": gender_desc,
         "user_type": user_type_desc,
         "bh_disposition_effect_category": disposition_desc,
         "bh_lottery_preference_category": lottery_desc,
@@ -228,45 +292,21 @@ def generate_persona_prompt(
     depth = int(agent["news_depth"])
     if depth not in depth_desc:
         raise ValueError("news_depth must be one of 0, 1, 2")
-    age = int(agent["age"])
     initial_cash = int(agent["ini_cash"])
-    location = str(agent["location"]).strip()
-    if age < 1:
-        raise ValueError("age must be positive")
     if initial_cash < 1:
         raise ValueError("ini_cash must be positive")
-    if not location:
-        raise ValueError("location must be non-empty")
     instrument = str(instrument_name).strip()
     if not instrument:
         raise ValueError("instrument_name must be non-empty")
     prompt = "\n".join(
         (
             f"당신은 한국의 {instrument} 개인투자자입니다.",
-            (
-                f"성별은 {gender_desc[agent['gender']]}, 나이는 {age}세, "
-                f"거주 지역은 {location}입니다."
-            ),
-            (
-                f"투자자 유형은 {user_type_desc[agent['user_type']]}이며, "
-                f"주요 투자 전략은 {strategy_desc[agent['strategy']]}"
-            ),
-            (
-                "처분효과 측면에서는 "
-                f"{disposition_desc[agent['bh_disposition_effect_category']]}."
-            ),
-            (
-                "위험 자산 선호 측면에서는 "
-                f"{lottery_desc[agent['bh_lottery_preference_category']]}."
-            ),
-            (
-                "성과 경험 측면에서는 "
-                f"{return_desc[agent['bh_total_return_category']]}."
-            ),
-            (
-                "분산투자 측면에서는 "
-                f"{underdiv_desc[agent['bh_underdiversification_category']]}."
-            ),
+            user_type_desc[agent["user_type"]],
+            disposition_desc[agent["bh_disposition_effect_category"]],
+            lottery_desc[agent["bh_lottery_preference_category"]],
+            return_desc[agent["bh_total_return_category"]],
+            underdiv_desc[agent["bh_underdiversification_category"]],
+            strategy_desc[agent["strategy"]],
             depth_desc[depth],
             (
                 f"이번 실험에서는 {instrument} 단일 자산만 거래하며, "
@@ -358,6 +398,11 @@ def structured_persona_sha256(agent: dict) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+# WARNING: this slot-driven selector targets the RETIRED demographic design.
+# The active cohort is distribution-matched to TwinMarket's behavioural axes and is
+# built by TwinMarket_analysis/build_ver3_cohort.py. A cohort produced here will
+# carry the 90/10 slot cash split and therefore FAIL verify_distribution, which now
+# expects 73/27. Kept for reference; do not use it to rebuild the study cohort.
 def match_agents(pool: list[dict], slots: list[dict], seed: int = config.RANDOM_SEED) -> list[dict]:
     if len(pool) < len(slots):
         raise ValueError(f"pool has {len(pool)} agents but {len(slots)} slots are required")
@@ -378,14 +423,14 @@ def match_agents(pool: list[dict], slots: list[dict], seed: int = config.RANDOM_
         chosen["age_group"] = slot["age_group"]
         chosen["ini_cash"] = slot["ini_cash"]
         chosen["location"] = assign_location(rng)
-        chosen["news_depth"] = assign_news_depth(index, len(slots))
+        chosen["news_depth"] = 1  # replaced below by assign_news_depths
         chosen["segment_key"] = segment_key(slot["age_group"], slot["gender"], slot["ini_cash"])
         chosen["match_score"] = score_agent(chosen, preferred)
         chosen["persona_prompt"] = generate_persona_prompt(chosen)
         used_source_ids.add(chosen["source_user_id"])
         selected.append(chosen)
 
-    assign_depth0_agents(selected, rng)
+    assign_news_depths(selected, rng)
     for agent in selected:
         agent["persona_prompt"] = generate_persona_prompt(agent)
 
@@ -422,9 +467,13 @@ def save_sys_100(agents: Iterable[dict], output_db: Path = config.SYS_100_DB) ->
         conn.commit()
 
 
+# Cohort design split. Cash follows TwinMarket's own 73/27 wealth split (the amounts
+# are ver3.0's 1억/10억); depth is the experiment's treatment split.
+EXPECTED_CASH_COUNTS = {config.INI_CASH_SMALL: 73, config.INI_CASH_LARGE: 27}
+EXPECTED_DEPTH_COUNTS = {0: 30, 1: 55, 2: 15}
+
+
 def verify_distribution(agents: list[dict]) -> dict:
-    gender = Counter(agent["gender"] for agent in agents)
-    age_group = Counter(agent["age_group"] for agent in agents)
     cash = Counter(agent["ini_cash"] for agent in agents)
     depth = Counter(agent["news_depth"] for agent in agents)
     prompt_errors = [
@@ -438,22 +487,13 @@ def verify_distribution(agents: list[dict]) -> dict:
     for agent in agents:
         segment_scores[agent["segment_key"]].append(agent["match_score"])
 
-    expected = {
-        "gender": {"male": 43, "female": 57},
-        "age_group": {"20대": 9, "30대": 18, "40대": 23, "50대": 26, "60대": 17, "70대": 6, "80대 이상": 1},
-        "cash": {config.INI_CASH_SMALL: 90, config.INI_CASH_LARGE: 10},
-        "news_depth": {0: 30, 1: 55, 2: 15},
-    }
+    # gender/age_group are no longer part of the cohort design and are not checked.
     return {
         "count": len(agents),
-        "gender": dict(gender),
-        "age_group": dict(age_group),
         "cash": dict(cash),
         "news_depth": dict(depth),
-        "distribution_pass": dict(gender) == expected["gender"]
-        and dict(age_group) == expected["age_group"]
-        and dict(cash) == expected["cash"]
-        and dict(depth) == expected["news_depth"]
+        "distribution_pass": dict(cash) == EXPECTED_CASH_COUNTS
+        and dict(depth) == EXPECTED_DEPTH_COUNTS
         and not prompt_errors,
         "prompt_errors": prompt_errors,
         "segment_avg_scores": {
