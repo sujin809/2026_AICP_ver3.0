@@ -1,0 +1,38 @@
+{
+  "community_delivery_summary": {
+    "best_posts": 0,
+    "delivered": 0,
+    "no_eligible_recipient": 0,
+    "right_censored": 0
+  },
+  "completed_event_count": 90,
+  "event_count": 90,
+  "full_frozen_schedule": true,
+  "log_dir": "/Users/sujinjung/Desktop/felab/aicp/AICP_ver3.0_유정/outputs/experiments/dist_matched_45d_0806/RN_COMM_OFF",
+  "outcome_finalized": true,
+  "response_journal": {
+    "logical_counts": {
+      "accepted/committed": 38693
+    },
+    "path": "/Users/sujinjung/Desktop/felab/aicp/AICP_ver3.0_유정/outputs/experiments/dist_matched_45d_0806/RN_COMM_OFF/.runtime/response_journal.sqlite",
+    "physical_attempt_counts": {
+      "accepted": 38693,
+      "error": 7,
+      "rejected": 813
+    },
+    "schema_version": "integrated-response-journal-v1",
+    "stage_labels": [
+      "depth2_post_search",
+      "depth2_pre_search",
+      "market_analysis",
+      "post_fill_long_term_belief",
+      "short_term_belief",
+      "trading_decision"
+    ]
+  },
+  "right_censored_outcome_count": 1300,
+  "run_id": "RN_COMM_OFF",
+  "runtime_db": "/Users/sujinjung/Desktop/felab/aicp/AICP_ver3.0_유정/outputs/experiments/dist_matched_45d_0806/RN_COMM_OFF/.runtime/runtime_sim.db",
+  "schedule_complete": true,
+  "status": "complete"
+}

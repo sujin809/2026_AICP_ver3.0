@@ -39,3 +39,19 @@ outputs/logs/experiment_matrix_45day_v10/RN_COMM_ON/community_interactions.csv
 outputs/logs/experiment_matrix_45day_v10/RN_COMM_ON/community_logs.csv
 outputs/logs/experiment_matrix_45day_v10/RN_COMM_ON/openrouter_calls.jsonl
 outputs/logs/experiment_matrix_45day_v10/RN_COMM_ON/traces/community_exposure_trace.jsonl
+
+# Large experiment logs
+outputs/experiments/**/.runtime/
+outputs/experiments/**/openrouter_calls.jsonl
+outputs/experiments/**/agent_turns.jsonl
+outputs/experiments/**/community_events.jsonl
+outputs/experiments/**/traces/
+outputs/experiments/**/response_journal.sqlite
+# 각각 120MB / 113MB 로 GitHub 파일당 100MB 제한을 넘는다. 재현은 실험 재실행으로 한다.
+outputs/experiments/**/community_interactions.csv
+outputs/experiments/**/community_logs.csv
+
+# 실행 콘솔 로그 (실험 산출물이 아니라 진행 기록)
+outputs/*.log
+# 개별 시뮬레이션 런 디렉터리. 런당 39MB, 본실험 산출물은 outputs/experiments/ 아래에 있다.
+outputs/logs/simulation_*/
