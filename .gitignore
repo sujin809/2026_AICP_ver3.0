@@ -62,3 +62,8 @@ outputs/logs/rn_ab_ver5_45day_20260820/*/daily_exchange.jsonl
 outputs/logs/rn_ab_ver5_45day_20260820/*/pm_posting_payload_*.json
 outputs/logs/rn_ab_ver5_45day_20260820/*/traces/
 outputs/experiment_base_ver5.db
+
+# 04로 결정적 재생성 가능한 base DB (experiment_base_sim.db와 같은 취급)
+outputs/experiment_base_dist_matched.db
+# 오프라인 스모크(1 agent / 1일 / offline_llm=true). 유료 호출 없고 연구 가치 없음
+outputs/logs/simulation_20260806_132623_570071_13986/
