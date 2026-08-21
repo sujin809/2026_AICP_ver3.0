@@ -24,13 +24,23 @@ SYS_1000_CSV = DATA_DIR / "sys_1000.csv"
 FIXED_SLOTS_CSV = DATA_DIR / "fixed_slots.csv"
 STOCK_DATA_CSV = DATA_DIR / "stock_data.csv"
 TRADING_DAYS_CSV = DATA_DIR / "trading_days.csv"
-SYS_100_DB = OUTPUT_DIR / "sys_100.db"
+# Persona cohort DB. The default is the original frozen baseline; set
+# TWINMARKET_SYS_100_DB to run a different sealed cohort without editing this file
+# (05_run_simulation.py and experiment_runtime.py both read config.SYS_100_DB
+# directly, so an env override is the only place that reaches both).
+SYS_100_DB = Path(os.getenv("TWINMARKET_SYS_100_DB", str(OUTPUT_DIR / "sys_100.db")))
 SIM_DB = OUTPUT_DIR / "sim.db"
 EXPERIMENT_BASE_DB = OUTPUT_DIR / "experiment_base_sim.db"
 
 # 현재 실제뉴스 baseline의 유일한 production 입력이다. ``outputs/*_split``과
 # legacy selected-news CSV는 이 봉인 파일을 만드는 source/history artifact일
 # 뿐이며, 시뮬레이션이 런타임에 다시 표본을 뽑는 입력으로 사용하지 않는다.
+# Sealed profile directory. Default is the original baseline; set
+# TWINMARKET_SEALED_PROFILE to point the regression suite at another sealed profile
+# without editing checked-in tests.
+SEALED_PROFILE_ROOT = PREPARATION_DIR / os.getenv(
+    "TWINMARKET_SEALED_PROFILE", "rn_ab_sealed_v1"
+)
 SEALED_REAL_NEWS_BUNDLE = PREPARATION_DIR / "rn_ab_sealed_v1" / "news.json"
 SEALED_EVENT_CALENDAR = PREPARATION_DIR / "rn_ab_sealed_v1" / "calendar.json"
 SEALED_EVENT_PRICES = PREPARATION_DIR / "rn_ab_sealed_v1" / "prices.json"

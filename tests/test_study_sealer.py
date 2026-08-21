@@ -107,11 +107,7 @@ class IntegratedStudySealerTests(unittest.TestCase):
         expected = self.sealer.build_persona_projection(
             config.SYS_100_DB
         )
-        path = (
-            config.PREPARATION_DIR
-            / "rn_ab_sealed_v1"
-            / "persona_projection.json"
-        )
+        path = config.SEALED_PROFILE_ROOT / "persona_projection.json"
         actual = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(
             canonical_sha256(actual),
@@ -119,7 +115,7 @@ class IntegratedStudySealerTests(unittest.TestCase):
         )
 
     def test_review_records_actual_deterministic_validation_only(self) -> None:
-        root = config.PREPARATION_DIR / "rn_ab_sealed_v1"
+        root = config.SEALED_PROFILE_ROOT
         bundle = SealedNewsBundle.load(root / "news.json")
         calendar = json.loads(
             (root / "calendar.json").read_text(encoding="utf-8")

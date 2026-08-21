@@ -44,3 +44,21 @@ outputs/logs/experiment_matrix_45day_v10/RN_COMM_ON/traces/community_exposure_tr
 # panels: s0_*.py ~ s2_*.py 재실행으로 복원. embed_cache: 임베딩 재계산 약 40분.
 analysis/community_belief_v10/panels/
 analysis/community_belief_v10/embed_cache/
+
+# rn_ab_ver5_45day_20260820 (2026-08-21 A/B 본실험)
+# 원본 대용량 산출물은 로컬 보관한다. LLM 응답은 재현 불가이므로 삭제 금지.
+# 커밋 대상은 분석에 필요한 요약·검증·서명 산출물로 한정한다.
+outputs/logs/rn_ab_ver5_45day_20260820/*/.runtime/*.db
+outputs/logs/rn_ab_ver5_45day_20260820/*/.runtime/response_journal.sqlite*
+outputs/logs/rn_ab_ver5_45day_20260820/*/agent_turns.jsonl
+outputs/logs/rn_ab_ver5_45day_20260820/*/agent_turns.csv
+outputs/logs/rn_ab_ver5_45day_20260820/*/openrouter_calls.jsonl
+outputs/logs/rn_ab_ver5_45day_20260820/*/community_events.jsonl
+outputs/logs/rn_ab_ver5_45day_20260820/*/community_interactions.csv
+outputs/logs/rn_ab_ver5_45day_20260820/*/community_logs.csv
+outputs/logs/rn_ab_ver5_45day_20260820/*/community_selection_inputs.*
+outputs/logs/rn_ab_ver5_45day_20260820/*/llm_validation_errors.jsonl
+outputs/logs/rn_ab_ver5_45day_20260820/*/daily_exchange.jsonl
+outputs/logs/rn_ab_ver5_45day_20260820/*/pm_posting_payload_*.json
+outputs/logs/rn_ab_ver5_45day_20260820/*/traces/
+outputs/experiment_base_ver5.db

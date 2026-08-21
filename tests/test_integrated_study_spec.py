@@ -20,9 +20,7 @@ from twinmarket_kr.study_spec import (
 
 class IntegratedStudySpecTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.sealed_root = (
-            config.PREPARATION_DIR / "rn_ab_sealed_v1"
-        )
+        self.sealed_root = config.SEALED_PROFILE_ROOT
         self.agents = load_agents_from_sys100(config.SYS_100_DB)
 
     def _validate(
