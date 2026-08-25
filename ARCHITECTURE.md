@@ -709,7 +709,7 @@ schedule 끝까지 horizon이 도래하지 않는 outcome은 `right_censored`로
 여기서 뉴스 D2 검색 5건은 커뮤니티 선택 읽기 상한과 별개의 정책이다.
 커뮤니티는 D1과 D2 모두 최대 5개이며, 뉴스 D1은 추가 검색을 하지 않는다.
 
-100명 분포는 D0/D1/D2 = 30/55/15다. `outputs/sys_100.db`의 structured
+100명 분포는 D0/D1/D2 = 30/55/15다. `data/sys_100_ko_ver5.db`의 structured
 `news_depth`를 정본으로 persona prompt를 재생성해 100명 모두 prompt와 권한이
 일치하도록 한다.
 

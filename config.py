@@ -24,11 +24,13 @@ SYS_1000_CSV = DATA_DIR / "sys_1000.csv"
 FIXED_SLOTS_CSV = DATA_DIR / "fixed_slots.csv"
 STOCK_DATA_CSV = DATA_DIR / "stock_data.csv"
 TRADING_DAYS_CSV = DATA_DIR / "trading_days.csv"
-# Persona cohort DB. The default is the original frozen baseline; set
+# Persona cohort DB. The default is the current frozen baseline; set
 # TWINMARKET_SYS_100_DB to run a different sealed cohort without editing this file
 # (05_run_simulation.py and experiment_runtime.py both read config.SYS_100_DB
 # directly, so an env override is the only place that reaches both).
-SYS_100_DB = Path(os.getenv("TWINMARKET_SYS_100_DB", str(OUTPUT_DIR / "sys_100.db")))
+SYS_100_DB = Path(
+    os.getenv("TWINMARKET_SYS_100_DB", str(DATA_DIR / "sys_100_ko_ver5.db"))
+)
 SIM_DB = OUTPUT_DIR / "sim.db"
 EXPERIMENT_BASE_DB = OUTPUT_DIR / "experiment_base_sim.db"
 

@@ -1,8 +1,0 @@
-{
-  "checkpoint_status": "paused",
-  "error": "1 post-fill LTB call(s) failed: BeliefValidationError: post_fill_long_term_belief failed after 10 attempts: [['post_fill_long_term_belief.dim_6 exceeds the 150-character limit (current=249)', \"integration_evidence.dim_6:must_preserve_evidence_relation:contradict_moved_to_support:['outcome:fill_A035_t002:h5']\"], ['post_fill_long_term_belief.dim_6 exceeds the 150-character limit (current=164)', 'every_due_outcome_must_be_cited_once_in_dim_6'], ['post_fill_long_term_belief.dim_6 exceeds the 150-character limit (current=161)'], ['post_fill_long_term_belief.dim_6 exceeds the 150-character limit (current=152)', \"integration_evidence.dim_6:must_preserve_evidence_relation:contradict_moved_to_support:['outcome:fill_A035_t002:h5']\", 'every_due_outcome_must_be_cited_once_in_dim_6'], ['every_due_outcome_must_be_cited_once_in_dim_6'], ['post_fill_long_term_belief.dim_6 exceeds the 150-character limit (current=152)', 'every_due_outcome_must_be_cited_once_in_dim_6'], ['every_due_outcome_must_be_cited_once_in_dim_6'], ['post_fill_long_term_belief.dim_6 exceeds the 150-character limit (current=205)'], ['every_due_outcome_must_be_cited_once_in_dim_6'], ['post_fill_long_term_belief.dim_6 exceeds the 150-character limit (current=152)', 'every_due_outcome_must_be_cited_once_in_dim_6']]",
-  "error_type": "ParallelTaskError",
-  "event_id": "2026-03-09/PM",
-  "restart_command": "rerun the identical command with --resume and --run-dir /Users/sujinjung/Desktop/felab/aicp/2026_AICP_ver3.0/outputs/logs/experiment_matrix_45day_20260731/RN_COMM_OFF",
-  "status": "paused"
-}

@@ -1,4 +1,4 @@
-# sys_100_ko_ver5.db — 100명 에이전트 코호트 (momentum/contrarian 축 포함)
+# sys_100_ko_ver5.db — 기본 100명 에이전트 코호트 (진입 타이밍 축 포함)
 
 삼성전자 단일 자산 실험용 에이전트 100명의 페르소나 데이터셋. 각 에이전트의
 프롬프트 전문이 DB 안에 들어 있어, 시뮬레이터가 이 파일만 읽으면 코호트를 그대로
@@ -20,7 +20,7 @@
 | `user_type` | ordinary 91 / small_influencer 8 / big_influencer 1 |
 | `gender` | 남성 / 여성 |
 | `strategy` | technical 60 / value 40 |
-| **`momentum_contrarian`** | **momentum 56 / contrarian 44** ← ver5 신규 |
+| **`momentum_contrarian`** | **contrarian 50 / neutral 35 / momentum 15** |
 | `bh_*_category` | 처분효과 · 복권선호 · 총수익률 · 과소분산 |
 | `ini_cash`, `fol_ind`, `news_depth`, `trad_pro` | 시뮬레이션 초기값 |
 | `persona_prompt` | 프롬프트 전문 (축 문장이 모두 반영된 최종본) |
@@ -30,18 +30,19 @@
 
 `momentum_contrarian` 축의 출처·배정 방법·시드를 담은 provenance 테이블.
 
-## momentum / contrarian 축
+## 진입 타이밍 축
 
 **이 축은 TwinMarket에서 추출한 값이 아니라 우리가 무작위 배정한 처치변수다.**
 TwinMarket `Profiles`에는 대응 컬럼이 없고, `strategy`(技术面/基本面)는 *어떤 정보를
 읽는가*를 나타내지 *어느 방향의 최근 가격 흐름에 진입하는가*를 나타내지 않는다.
 따라서 이 축을 TwinMarket 유래 특성으로 보고하면 안 된다. (`CLAUDE.md` 절대 규칙)
 
-- 배정: 에이전트별 Bernoulli(0.5) 독립 추첨, `agent_id` 순, **그룹 크기 고정 안 함**
-- 시드: `20260818` (재실행 시 동일 배정 재현)
-- 결과: momentum 56 / contrarian 44
-- `strategy`와 독립 배정 → technical×momentum 32, technical×contrarian 28,
-  value×momentum 24, value×contrarian 16
+- 배정: 에이전트별 5:3:1.5 가중 범주형 독립 추첨(contrarian:neutral:momentum),
+  `agent_id` 순, **그룹 크기 고정 안 함**
+- 시드: `20260825` (재실행 시 동일 배정 재현)
+- 결과: contrarian 50 / neutral 35 / momentum 15
+- `strategy`와 독립 배정 → technical×contrarian 31, technical×neutral 16,
+  technical×momentum 13, value×contrarian 19, value×neutral 19, value×momentum 2
 
 ### 프롬프트에 삽입된 문장
 
@@ -56,6 +57,11 @@ TwinMarket `Profiles`에는 대응 컬럼이 없고, `strategy`(技术面/基本
 > 당신은 신규 매수를 결정할 때 최근 가격이 하락한 국면을 선호합니다. 가격 하락이 과도해
 > 향후 반등할 가능성이 있다고 판단되면 신규 매수합니다. 반대로 최근 가격이 크게 상승한
 > 국면은 과열되었다고 보아 추격 매수를 피합니다.
+
+**neutral**
+> 당신은 신규 매수를 결정할 때 최근 가격의 상승·하락 추세 자체보다 기업의 가치와 이용
+> 가능한 정보가 투자 판단을 뒷받침하는지를 우선 검토합니다. 최근 가격 흐름만을 이유로
+> 신규 매수나 추격 매수를 결정하지 않습니다.
 
 문구를 "신규 **매수**를 결정할 때"로 한정한 이유: value 에이전트의 "저평가되었을 때
 매수" 문장과 층위를 분리하기 위해서다. 무엇이 싼지는 내재가치로 판단하고, 신규 진입

@@ -480,7 +480,7 @@ def build_spec(
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="통합 메인 실험 입력 세트 생성.")
     p.add_argument("--out", type=Path, default=PROJECT_ROOT / "preparation/rn_ab_sealed_v1")
-    p.add_argument("--sys-db", type=Path, default=PROJECT_ROOT / "outputs/sys_100.db")
+    p.add_argument("--sys-db", type=Path, default=config.SYS_100_DB)
     p.add_argument(
         "--agent-ids-file",
         type=Path,

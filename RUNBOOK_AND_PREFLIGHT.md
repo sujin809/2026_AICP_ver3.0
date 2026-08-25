@@ -403,7 +403,7 @@ code hash, prompt bundle hash가 낡는다. 다음 순서로 새 버전을 만�
 ```bash
 python scripts/15_seal_study.py \
   --out preparation/rn_ab_sealed_candidate_20260729 \
-  --sys-db outputs/sys_100.db \
+  --sys-db data/sys_100_ko_ver5.db \
   --sim-db outputs/sim.db \
   --prompt-dir prompts \
   --news preparation/rn_ab_sealed_v1/news.json \

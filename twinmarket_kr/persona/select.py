@@ -259,9 +259,8 @@ def generate_persona_prompt(
         ),
     }
     # Entry-timing axis. Unlike the behavioural axes above, this one is NOT derived
-    # from TwinMarket -- it is a treatment variable we assign (Bernoulli(0.5), seed
-    # 20260818) and it is recorded as such in sys_100_ko_ver5.db's meta table. The
-    # two strings below are byte-identical to the sentences stored in that cohort DB.
+    # from TwinMarket -- it is a treatment variable assigned independently per agent.
+    # The strings below are byte-identical to the sentences stored in the cohort DB.
     # Both are scoped to *new buying* so that value x momentum does not read as
     # "it got expensive, therefore buy".
     momentum_desc = {
@@ -276,6 +275,12 @@ def generate_persona_prompt(
             "가격 하락이 과도해 향후 반등할 가능성이 있다고 판단되면 신규 "
             "매수합니다. 반대로 최근 가격이 크게 상승한 국면은 과열되었다고 보아 "
             "추격 매수를 피합니다."
+        ),
+        "neutral": (
+            "당신은 신규 매수를 결정할 때 최근 가격의 상승·하락 추세 자체보다 "
+            "기업의 가치와 이용 가능한 정보가 투자 판단을 뒷받침하는지를 우선 "
+            "검토합니다. 최근 가격 흐름만을 이유로 신규 매수나 추격 매수를 "
+            "결정하지 않습니다."
         ),
     }
     depth_desc = {

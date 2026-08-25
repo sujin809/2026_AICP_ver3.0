@@ -495,7 +495,7 @@ community mode, model, 수수료를 결정하는 정본이 아니다.
 | resolver | authored spec과 registry hash를 검증해 계산값을 포함한 불변 manifest 생성 | `twinmarket_kr/study_spec.py`, `scripts/15_seal_study.py` |
 | RunContext | manifest, run ID, 조건, 경로, registry reader, 정책을 dependency로 전달 | `scripts/05_run_simulation.py`, `twinmarket_kr/experiment_runtime.py` |
 | EventSchedule | 45일·90 event의 순서, AM/PM, cutoff, reference price ID 제공 | `calendar.json`, `stage_inputs.json`, `prices.json` |
-| cohort registry | agent ID, 구조화 persona, depth, 초기 현금 exact map | `cohort.json`, `persona_projection.json`, `outputs/sys_100.db` |
+| cohort registry | agent ID, 구조화 persona, depth, 초기 현금 exact map | `cohort.json`, `persona_projection.json`, `data/sys_100_ko_ver5.db` |
 | sealed news registry | event별 순서가 고정된 실제뉴스, payload hash, shortage | `news.json` |
 | prompt registry | production prompt hash와 stage schema를 고정 | 최상위 `prompts/`; run bundle의 사본은 재현 artifact |
 
