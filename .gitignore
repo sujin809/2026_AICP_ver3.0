@@ -72,6 +72,9 @@ outputs/logs/rn_ab_ver6_45day_2026082*.stdout.log
 outputs/logs/rn_ab_ver6_45day_2026082*/*.stdout.log
 outputs/logs/rn_ab_ver6_45day_2026082*/*.stale_*
 outputs/logs/rn_ab_ver6_45day_2026082*/*.console.log.stale_*
+# committed.db / runtime_sim.db 는 .gz 로 압축해 커밋한다 (분석 시 gunzip 필요).
+# response_journal.sqlite 는 LLM resume 저널이라 분석 가치가 낮고 압축해도 100MB 초과분이
+# 있어 제외한다.
 outputs/logs/rn_ab_ver6_45day_2026082*/*/.runtime/*.db
 outputs/logs/rn_ab_ver6_45day_2026082*/*/.runtime/response_journal.sqlite*
 outputs/logs/rn_ab_ver6_45day_2026082*/*/agent_turns.jsonl
