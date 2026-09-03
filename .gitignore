@@ -64,9 +64,10 @@ outputs/logs/rn_ab_ver5_45day_20260820/*/traces/
 outputs/experiment_base_ver5.db
 
 # rn_ab_ver6_45day_20260825 / 20260826 (2026-09-03 결과 정리)
-# ver5와 동일 정책: 대용량 원시 로그는 로컬 보관, 요약·검증·서명 산출물만 커밋.
-# LLM 응답은 재현 불가이므로 로컬에서 삭제 금지. 중단된 실행 잔여물(.stale_*)과
-# stdout 로그는 통째로 제외한다.
+# GitHub 100MB 파일 제한을 넘는 원시 로그만 로컬 보관하고, 그 미만은 로그 분석용으로
+# 커밋한다. LLM 응답은 재현 불가이므로 로컬에서 삭제 금지. 중단된 실행 잔여물(.stale_*)과
+# stdout 로그는 통째로 제외한다. (agent_turns.csv / community_selection_inputs.* /
+# llm_validation_errors.jsonl / daily_exchange.jsonl / pm_posting_payload_*.json 는 커밋함)
 outputs/logs/rn_ab_ver6_45day_2026082*.stdout.log
 outputs/logs/rn_ab_ver6_45day_2026082*/*.stdout.log
 outputs/logs/rn_ab_ver6_45day_2026082*/*.stale_*
@@ -74,15 +75,10 @@ outputs/logs/rn_ab_ver6_45day_2026082*/*.console.log.stale_*
 outputs/logs/rn_ab_ver6_45day_2026082*/*/.runtime/*.db
 outputs/logs/rn_ab_ver6_45day_2026082*/*/.runtime/response_journal.sqlite*
 outputs/logs/rn_ab_ver6_45day_2026082*/*/agent_turns.jsonl
-outputs/logs/rn_ab_ver6_45day_2026082*/*/agent_turns.csv
 outputs/logs/rn_ab_ver6_45day_2026082*/*/openrouter_calls.jsonl
 outputs/logs/rn_ab_ver6_45day_2026082*/*/community_events.jsonl
 outputs/logs/rn_ab_ver6_45day_2026082*/*/community_interactions.csv
 outputs/logs/rn_ab_ver6_45day_2026082*/*/community_logs.csv
-outputs/logs/rn_ab_ver6_45day_2026082*/*/community_selection_inputs.*
-outputs/logs/rn_ab_ver6_45day_2026082*/*/llm_validation_errors.jsonl
-outputs/logs/rn_ab_ver6_45day_2026082*/*/daily_exchange.jsonl
-outputs/logs/rn_ab_ver6_45day_2026082*/*/pm_posting_payload_*.json
 outputs/logs/rn_ab_ver6_45day_2026082*/*/traces/
 outputs/experiment_base_ver6.db
 outputs/experiment_base_ver6_v3.db
