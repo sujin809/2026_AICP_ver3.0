@@ -5,12 +5,15 @@ import argparse
 import csv
 import json
 import math
-import re
 import sys
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
@@ -21,10 +24,10 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Flowable, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+from twinmarket_kr.run_integrity import require_publication_ready_run
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
 VALIDATION_DIR = PROJECT_ROOT / "validation"
-DEFAULT_RUN_DIR = PROJECT_ROOT / "outputs" / "logs" / "current"
 ACTUAL_INVESTOR_COLUMNS = [
     "Individuals",
     "Subtotal-Institutions",
@@ -49,10 +52,23 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Compare simulated LLM net buy/sell direction with Samsung Electronics investor net trading data."
     )
-    parser.add_argument("--run-dir", type=Path, default=DEFAULT_RUN_DIR, help="Simulation log directory.")
+    parser.add_argument(
+        "--run-dir",
+        type=Path,
+        required=True,
+        help="Explicit completed simulation run directory.",
+    )
     parser.add_argument("--actual-value", type=Path, default=VALIDATION_DIR / "data_trading_value.csv")
     parser.add_argument("--actual-volume", type=Path, default=VALIDATION_DIR / "data_trading_volume.csv")
-    parser.add_argument("--output-dir", type=Path, default=None)
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        required=True,
+        help=(
+            "Explicit derivative destination outside --run-dir; a sealed run "
+            "directory must remain immutable."
+        ),
+    )
     parser.add_argument("--stock-code", default="005930")
     parser.add_argument(
         "--start-date",
@@ -69,8 +85,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skip-initial-days",
         type=int,
-        default=5,
-        help="Exclude the first N overlapping trading days from validation metrics and charts.",
+        default=3,
+        help=(
+            "Exclude the first N approved simulation trading days after exact "
+            "coverage validation. The Samsung baseline uses 3."
+        ),
     )
     return parser.parse_args()
 
@@ -90,6 +109,19 @@ def write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> 
         writer.writerows(rows)
 
 
+def require_external_output_dir(output_dir: Path, run_dir: Path) -> Path:
+    """Reject derived artifacts inside a sealed run's signed artifact tree."""
+
+    resolved_output = output_dir.resolve()
+    resolved_run = run_dir.resolve()
+    if resolved_output == resolved_run or resolved_output.is_relative_to(resolved_run):
+        raise ValueError(
+            "--output-dir must be outside --run-dir so derived validation files "
+            "cannot alter the sealed run artifact hash"
+        )
+    return resolved_output
+
+
 def parse_date(value: str) -> str:
     value = str(value or "").strip()
     for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d"):
@@ -107,6 +139,18 @@ def num(value: Any, default: float = 0.0) -> float:
         return float(str(value).replace(",", ""))
     except (TypeError, ValueError):
         return default
+
+
+def strict_num(value: Any, *, label: str) -> float:
+    if isinstance(value, bool) or value in (None, ""):
+        raise ValueError(f"{label} must be a finite number")
+    try:
+        parsed = float(str(value).replace(",", ""))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must be a finite number: {value!r}") from exc
+    if not math.isfinite(parsed):
+        raise ValueError(f"{label} must be finite: {value!r}")
+    return parsed
 
 
 def sign(value: float, eps: float = 1e-9) -> int:
@@ -331,13 +375,24 @@ def baseline_metrics(actual_values: list[float], market_return_values: list[floa
 def load_actual(path: Path) -> dict[str, dict[str, float]]:
     rows = read_csv(path)
     actual: dict[str, dict[str, float]] = {}
-    for row in rows:
+    for row_number, row in enumerate(rows, start=2):
         date = parse_date(row["Date"])
-        actual[date] = {column: num(row.get(column)) for column in ACTUAL_INVESTOR_COLUMNS}
+        if date in actual:
+            raise ValueError(f"duplicate actual target date in {path}: {date}")
+        actual[date] = {
+            column: strict_num(
+                row.get(column),
+                label=f"{path.name}:{row_number}:{column}",
+            )
+            for column in ACTUAL_INVESTOR_COLUMNS
+        }
     return actual
 
 
-def load_simulation(run_dir: Path, stock_code: str) -> tuple[str, dict[str, dict[str, float]]]:
+def load_simulation(
+    run_dir: Path,
+    stock_code: str,
+) -> tuple[str, dict[str, dict[str, float]], dict[str, Any]]:
     run_dir = run_dir.resolve()
     fills_path = run_dir / "exchange_fills.csv"
     daily_path = run_dir / "daily_exchange_summary.csv"
@@ -352,6 +407,10 @@ def load_simulation(run_dir: Path, stock_code: str) -> tuple[str, dict[str, dict
         lambda: {
             "llm_volume": 0.0,
             "llm_value": 0.0,
+            "am_llm_volume": 0.0,
+            "am_llm_value": 0.0,
+            "pm_llm_volume": 0.0,
+            "pm_llm_value": 0.0,
             "llm_buy_volume": 0.0,
             "llm_sell_volume": 0.0,
             "closing_price": 0.0,
@@ -371,22 +430,85 @@ def load_simulation(run_dir: Path, stock_code: str) -> tuple[str, dict[str, dict
             if previous_close and previous_close != 0:
                 daily[date]["market_return"] = (close - previous_close) / previous_close
             previous_close = close
-    for row in fills:
+    seen_fill_ids: set[str] = set()
+    seen_agent_events: set[tuple[str, str, str]] = set()
+    for row_number, row in enumerate(fills, start=2):
         if str(row.get("stock_code") or stock_code) != stock_code:
             continue
         date = parse_date(row["date"])
-        qty = num(row.get("quantity") or row.get("executed_quantity") or row.get("filled_quantity"))
-        price = num(row.get("executed_price"))
+        fill_id = str(row.get("fill_id") or "").strip()
+        if not fill_id:
+            raise ValueError(f"exchange_fills.csv:{row_number}:fill_id is required")
+        if fill_id in seen_fill_ids:
+            raise ValueError(f"duplicate fill_id in exchange_fills.csv: {fill_id}")
+        seen_fill_ids.add(fill_id)
+        qty = strict_num(
+            row.get("quantity")
+            or row.get("executed_quantity")
+            or row.get("filled_quantity"),
+            label=f"exchange_fills.csv:{row_number}:quantity",
+        )
+        price = strict_num(
+            row.get("executed_price"),
+            label=f"exchange_fills.csv:{row_number}:executed_price",
+        )
+        if qty <= 0 or not qty.is_integer():
+            raise ValueError(
+                f"exchange_fills.csv:{row_number}:quantity must be a positive integer"
+            )
+        if price <= 0:
+            raise ValueError(
+                f"exchange_fills.csv:{row_number}:executed_price must be positive"
+            )
         action = str(row.get("action") or row.get("direction") or "").lower()
+        if action not in {"buy", "sell"}:
+            raise ValueError(
+                f"exchange_fills.csv:{row_number}:action must be buy or sell"
+            )
+        subturn = str(row.get("subturn") or "").strip().lower()
+        if subturn not in {"am", "pm"}:
+            raise ValueError(
+                f"fill row has invalid or missing subturn for {date}: {subturn!r}"
+            )
+        agent_id = str(row.get("agent_id") or row.get("user_id") or "").strip()
+        if not agent_id:
+            raise ValueError(f"exchange_fills.csv:{row_number}:agent_id is required")
+        agent_event = (agent_id, date, subturn)
+        if agent_event in seen_agent_events:
+            raise ValueError(
+                "exchange_fills.csv contains more than one fill for "
+                f"agent-event {agent_event}"
+            )
+        seen_agent_events.add(agent_event)
+        if "fee" in row and strict_num(
+            row.get("fee"),
+            label=f"exchange_fills.csv:{row_number}:fee",
+        ) != 0:
+            raise ValueError(
+                f"exchange_fills.csv:{row_number}:baseline fee must be zero"
+            )
+        if str(row.get("status") or "").lower() != "filled":
+            raise ValueError(
+                f"exchange_fills.csv:{row_number}:status must be filled"
+            )
         signed_qty = qty if action == "buy" else -qty
         signed_value = signed_qty * price
         daily[date]["llm_volume"] += signed_qty
         daily[date]["llm_value"] += signed_value
+        daily[date][f"{subturn}_llm_volume"] += signed_qty
+        daily[date][f"{subturn}_llm_value"] += signed_value
         if signed_qty > 0:
             daily[date]["llm_buy_volume"] += qty
         elif signed_qty < 0:
             daily[date]["llm_sell_volume"] += qty
-    return run_id, dict(daily)
+    return run_id, dict(daily), {
+        "fill_count": len(seen_fill_ids),
+        "fill_ids": sorted(seen_fill_ids),
+        "agent_event_keys": [
+            {"agent_id": agent_id, "date": date, "subturn": subturn}
+            for agent_id, date, subturn in sorted(seen_agent_events)
+        ],
+    }
 
 
 def load_run_metadata(run_dir: Path) -> dict[str, Any]:
@@ -430,12 +552,28 @@ def build_comparison_rows(
     label: str,
     actual: dict[str, dict[str, float]],
     simulation: dict[str, dict[str, float]],
+    expected_dates: list[str] | None = None,
+    simulation_key: str | None = None,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    sim_key = "llm_value" if label == "value" else "llm_volume"
-    for date in sorted(set(actual) & set(simulation)):
+    sim_key = simulation_key or (
+        "llm_value" if label == "value" else "llm_volume"
+    )
+    dates = list(expected_dates) if expected_dates is not None else sorted(simulation)
+    if len(dates) != len(set(dates)):
+        raise ValueError("expected simulation dates contain duplicates")
+    missing_actual = [date for date in dates if date not in actual]
+    missing_simulation = [date for date in dates if date not in simulation]
+    if missing_actual or missing_simulation:
+        raise ValueError(
+            "direction validation requires exact approved-date coverage; "
+            f"missing_actual={missing_actual} missing_simulation={missing_simulation}"
+        )
+    for date in dates:
         sim = simulation[date]
         actual_row = actual[date]
+        if sim_key not in sim:
+            raise ValueError(f"simulation metric {sim_key!r} is missing for {date}")
         row: dict[str, Any] = {
             "date": date,
             "llm_net": sim[sim_key],
@@ -470,12 +608,56 @@ def filter_date_range(
     ]
 
 
-def summarize_dimension(rows: list[dict[str, Any]], metric_key: str) -> dict[str, Any]:
+def _lag_baselines_for_evaluation(
+    *,
+    full_rows: list[dict[str, Any]],
+    evaluation_rows: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    if not evaluation_rows:
+        return {}
+    ordered = sorted(full_rows, key=lambda row: row["date"])
+    previous_actual_by_date: dict[str, float] = {}
+    previous_market_by_date: dict[str, float] = {}
+    for index, row in enumerate(ordered):
+        if index == 0:
+            previous_actual_by_date[row["date"]] = 0.0
+            previous_market_by_date[row["date"]] = 0.0
+            continue
+        prior = ordered[index - 1]
+        previous_actual_by_date[row["date"]] = float(sign(num(prior["Individuals"])))
+        previous_market_by_date[row["date"]] = float(sign(num(prior.get("market_return"))))
+    actual_values = [num(row["Individuals"]) for row in evaluation_rows]
+    return {
+        "previous_day_individual_direction": sign_metrics(
+            [previous_actual_by_date[row["date"]] for row in evaluation_rows],
+            actual_values,
+        ),
+        "previous_day_market_return_direction": sign_metrics(
+            [previous_market_by_date[row["date"]] for row in evaluation_rows],
+            actual_values,
+        ),
+    }
+
+
+def summarize_dimension(
+    rows: list[dict[str, Any]],
+    metric_key: str,
+    *,
+    full_rows: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     llm_values = [num(row["llm_net"]) for row in rows]
     actual_individuals = [num(row["Individuals"]) for row in rows]
     market_returns = [num(row.get("market_return")) for row in rows]
     primary_metrics = compute_direction_metrics(llm_values, actual_individuals)
     bundle = metric_bundle(llm_values, actual_individuals)
+    baselines = baseline_metrics(actual_individuals, market_returns)
+    if full_rows is not None:
+        baselines.update(
+            _lag_baselines_for_evaluation(
+                full_rows=full_rows,
+                evaluation_rows=rows,
+            )
+        )
     summary: dict[str, Any] = {
         "metric": metric_key,
         "overlap_days": len(rows),
@@ -486,7 +668,7 @@ def summarize_dimension(rows: list[dict[str, Any]], metric_key: str) -> dict[str
             "note": "누적 Pearson은 상승장 + 단일가 체결 구조상 구조적 역전이 발생할 수 있음",
         },
         "llm_vs_individuals": bundle,
-        "baselines_vs_individuals": baseline_metrics(actual_individuals, market_returns),
+        "baselines_vs_individuals": baselines,
     }
     return summary
 
@@ -862,8 +1044,49 @@ def build_report(
         story.extend(confusion_table("Value confusion matrix: LLM vs Individuals", v_primary, styles))
         story.extend(confusion_table("Volume confusion matrix: LLM vs Individuals", q_primary, styles))
 
+        exploratory = summary.get("exploratory_subturns") or {}
+        if exploratory:
+            story.append(para("3. AM·PM 탐색 지표", styles["KHeading1"]))
+            story.append(
+                para(
+                    exploratory.get("warning")
+                    or "AM/PM별 실제 개인수급 target이 없으므로 탐색 지표로만 해석한다.",
+                    styles["KBody"],
+                )
+            )
+            exploratory_rows = [
+                ["구간", "Value 방향", "Value Balanced", "Volume 방향", "Volume Balanced"]
+            ]
+            for subturn in ("am", "pm"):
+                value_metric = (
+                    exploratory.get(f"{subturn}_value", {})
+                    .get("llm_vs_individuals", {})
+                )
+                volume_metric = (
+                    exploratory.get(f"{subturn}_volume", {})
+                    .get("llm_vs_individuals", {})
+                )
+                exploratory_rows.append(
+                    [
+                        subturn.upper(),
+                        pct(value_metric.get("direction_match_rate")),
+                        pct(value_metric.get("balanced_accuracy")),
+                        pct(volume_metric.get("direction_match_rate")),
+                        pct(volume_metric.get("balanced_accuracy")),
+                    ]
+                )
+            story.append(
+                table(
+                    [
+                        [para(cell, styles["KSmall"]) for cell in row]
+                        for row in exploratory_rows
+                    ],
+                    [30 * mm, 32 * mm, 35 * mm, 32 * mm, 35 * mm],
+                )
+            )
+
         story.append(PageBreak())
-        story.append(para("3. 일별 비교 샘플", styles["KHeading1"]))
+        story.append(para("4. 일별 비교 샘플", styles["KHeading1"]))
         sample_rows = [["날짜", "LLM Value", "개인 Value", "일치", "LLM Volume", "개인 Volume", "일치"]]
         volume_by_date = {row["date"]: row for row in volume_rows}
         for row in value_rows[:30]:
@@ -886,7 +1109,7 @@ def build_report(
             )
         )
 
-        story.append(para("4. 해석", styles["KHeading1"]))
+        story.append(para("5. 해석", styles["KHeading1"]))
         story.append(para(make_interpretation(summary), styles["KBody"]))
 
     doc = SimpleDocTemplate(
@@ -923,29 +1146,136 @@ def make_interpretation(summary: dict[str, Any]) -> str:
     )
 
 
-def safe_run_name(run_id: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", run_id).strip("_") or "run"
-
-
 def main() -> None:
     args = parse_args()
     try:
+        if args.skip_initial_days < 0:
+            raise ValueError("--skip-initial-days must be non-negative")
+        require_publication_ready_run(args.run_dir)
         actual_value = load_actual(args.actual_value)
         actual_volume = load_actual(args.actual_volume)
-        run_id, simulation = load_simulation(args.run_dir, args.stock_code)
+        run_id, simulation, fill_audit = load_simulation(
+            args.run_dir,
+            args.stock_code,
+        )
         run_metadata = load_run_metadata(args.run_dir)
 
-        output_dir = args.output_dir or (VALIDATION_DIR / "outputs" / safe_run_name(run_id))
+        output_dir = require_external_output_dir(args.output_dir, args.run_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        value_rows = build_comparison_rows(label="value", actual=actual_value, simulation=simulation)
-        volume_rows = build_comparison_rows(label="volume", actual=actual_volume, simulation=simulation)
-        value_rows = filter_date_range(value_rows, args.start_date, args.end_date)
-        volume_rows = filter_date_range(volume_rows, args.start_date, args.end_date)
-        skipped_value_dates = [row["date"] for row in value_rows[: args.skip_initial_days]]
-        skipped_volume_dates = [row["date"] for row in volume_rows[: args.skip_initial_days]]
-        value_rows = skip_initial_rows(value_rows, args.skip_initial_days)
-        volume_rows = skip_initial_rows(volume_rows, args.skip_initial_days)
+        approved_dates = [
+            parse_date(date)
+            for date in (
+                run_metadata.get("trading_dates")
+                or sorted(simulation)
+            )
+        ]
+        if not approved_dates:
+            raise ValueError("run metadata and fill ledger contain no approved trading dates")
+        if len(approved_dates) != len(set(approved_dates)):
+            raise ValueError("approved trading-date registry contains duplicates")
+        simulation_dates = set(simulation)
+        approved_date_set = set(approved_dates)
+        if simulation_dates != approved_date_set:
+            raise ValueError(
+                "simulation dates differ from the approved run calendar; "
+                f"missing={sorted(approved_date_set - simulation_dates)} "
+                f"unexpected={sorted(simulation_dates - approved_date_set)}"
+            )
+        agent_ids = [
+            str(agent_id)
+            for agent_id in (run_metadata.get("agent_ids") or [])
+        ]
+        if not agent_ids:
+            agent_ids = sorted(
+                {
+                    str(row["agent_id"])
+                    for row in fill_audit["agent_event_keys"]
+                }
+            )
+        expected_agent_events = {
+            (agent_id, date, subturn)
+            for agent_id in agent_ids
+            for date in approved_dates
+            for subturn in ("am", "pm")
+        }
+        observed_agent_events = {
+            (
+                str(row["agent_id"]),
+                str(row["date"]),
+                str(row["subturn"]),
+            )
+            for row in fill_audit["agent_event_keys"]
+        }
+        if observed_agent_events != expected_agent_events:
+            raise ValueError(
+                "fill ledger does not contain exactly one row per approved "
+                "agent-date-subturn; "
+                f"missing={sorted(expected_agent_events - observed_agent_events)[:20]} "
+                f"unexpected={sorted(observed_agent_events - expected_agent_events)[:20]}"
+            )
+
+        full_value_rows = build_comparison_rows(
+            label="value",
+            actual=actual_value,
+            simulation=simulation,
+            expected_dates=approved_dates,
+        )
+        full_volume_rows = build_comparison_rows(
+            label="volume",
+            actual=actual_volume,
+            simulation=simulation,
+            expected_dates=approved_dates,
+        )
+        full_am_value_rows = build_comparison_rows(
+            label="value",
+            actual=actual_value,
+            simulation=simulation,
+            expected_dates=approved_dates,
+            simulation_key="am_llm_value",
+        )
+        full_pm_value_rows = build_comparison_rows(
+            label="value",
+            actual=actual_value,
+            simulation=simulation,
+            expected_dates=approved_dates,
+            simulation_key="pm_llm_value",
+        )
+        full_am_volume_rows = build_comparison_rows(
+            label="volume",
+            actual=actual_volume,
+            simulation=simulation,
+            expected_dates=approved_dates,
+            simulation_key="am_llm_volume",
+        )
+        full_pm_volume_rows = build_comparison_rows(
+            label="volume",
+            actual=actual_volume,
+            simulation=simulation,
+            expected_dates=approved_dates,
+            simulation_key="pm_llm_volume",
+        )
+
+        burn_in_dates = approved_dates[: args.skip_initial_days]
+        burn_in_set = set(burn_in_dates)
+
+        def evaluation_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            return [
+                row
+                for row in filter_date_range(rows, args.start_date, args.end_date)
+                if row["date"] not in burn_in_set
+            ]
+
+        value_rows = evaluation_rows(full_value_rows)
+        volume_rows = evaluation_rows(full_volume_rows)
+        am_value_rows = evaluation_rows(full_am_value_rows)
+        pm_value_rows = evaluation_rows(full_pm_value_rows)
+        am_volume_rows = evaluation_rows(full_am_volume_rows)
+        pm_volume_rows = evaluation_rows(full_pm_volume_rows)
+        skipped_value_dates = list(burn_in_dates)
+        skipped_volume_dates = list(burn_in_dates)
+        if [row["date"] for row in value_rows] != [row["date"] for row in volume_rows]:
+            raise ValueError("value and volume evaluation-date sets differ")
         fieldnames = [
             "date",
             "llm_net",
@@ -970,10 +1300,57 @@ def main() -> None:
             "validation_start_date": args.start_date,
             "validation_end_date": args.end_date,
             "skip_initial_days": args.skip_initial_days,
+            "approved_trading_days": len(approved_dates),
+            "approved_trading_dates": approved_dates,
+            "evaluation_days": len(value_rows),
+            "evaluation_dates": [row["date"] for row in value_rows],
+            "evaluation_policy": "approved_calendar_then_fixed_burn_in_mask",
+            "primary_trade_aggregation": "daily_am_plus_pm_gross_signed_fill",
+            "fill_completeness": {
+                "agent_count": len(agent_ids),
+                "expected_fill_count": len(expected_agent_events),
+                "observed_fill_count": int(fill_audit["fill_count"]),
+                "exact_agent_date_subturn_keys": True,
+                "fee_policy": "zero",
+            },
             "skipped_value_dates": skipped_value_dates,
             "skipped_volume_dates": skipped_volume_dates,
-            "value": summarize_dimension(value_rows, "value"),
-            "volume": summarize_dimension(volume_rows, "volume"),
+            "value": summarize_dimension(
+                value_rows,
+                "value",
+                full_rows=full_value_rows,
+            ),
+            "volume": summarize_dimension(
+                volume_rows,
+                "volume",
+                full_rows=full_volume_rows,
+            ),
+            "exploratory_subturns": {
+                "warning": (
+                    "AM/PM별 실제 개인수급 target이 없으므로 각 subturn을 "
+                    "일일 Individuals 방향과 비교한 탐색 지표다."
+                ),
+                "am_value": summarize_dimension(
+                    am_value_rows,
+                    "am_value_exploratory",
+                    full_rows=full_am_value_rows,
+                ),
+                "pm_value": summarize_dimension(
+                    pm_value_rows,
+                    "pm_value_exploratory",
+                    full_rows=full_pm_value_rows,
+                ),
+                "am_volume": summarize_dimension(
+                    am_volume_rows,
+                    "am_volume_exploratory",
+                    full_rows=full_am_volume_rows,
+                ),
+                "pm_volume": summarize_dimension(
+                    pm_volume_rows,
+                    "pm_volume_exploratory",
+                    full_rows=full_pm_volume_rows,
+                ),
+            },
         }
         summary["primary_metrics"] = {
             "value": summary["value"]["primary_metrics"],

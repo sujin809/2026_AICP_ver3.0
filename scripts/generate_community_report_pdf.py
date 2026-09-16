@@ -4,10 +4,14 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import re
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
@@ -18,12 +22,16 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Table, TableStyle
 
-from report_common import pick_representative_agents
+from report_common import (
+    is_reaction_row,
+    pick_representative_agents,
+    summarize_canonical_lineage,
+    summarize_community_exposures,
+    summarize_reasoning_off,
+)
+from twinmarket_kr.run_integrity import require_publication_ready_run
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_RUN_DIR = PROJECT_ROOT / "outputs" / "logs" / "current"
-REPORT_DIR = PROJECT_ROOT / "outputs" / "reports"
 FONT_PATHS = [
     Path("/System/Library/Fonts/Supplemental/AppleGothic.ttf"),
     Path("/System/Library/Fonts/Supplemental/Arial Unicode.ttf"),
@@ -36,6 +44,19 @@ def register_font() -> str:
             pdfmetrics.registerFont(TTFont("Korean", str(path)))
             return "Korean"
     return "Helvetica"
+
+
+def require_external_output(output: Path, run_dir: Path) -> Path:
+    """Keep derived PDFs out of the signed run artifact tree."""
+
+    resolved_output = output.resolve()
+    resolved_run = run_dir.resolve()
+    if resolved_output == resolved_run or resolved_output.is_relative_to(resolved_run):
+        raise RuntimeError(
+            "--output must be outside --run-dir so a derived PDF cannot alter "
+            "the sealed run artifact hash"
+        )
+    return resolved_output
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:
@@ -55,12 +76,6 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
 def short(text: Any, limit: int = 180) -> str:
     value = " ".join(str(text or "").split())
     return value if len(value) <= limit else value[: limit - 1].rstrip() + "…"
-
-
-def report_dir_for_run(run_id: str) -> Path:
-    match = re.search(r"(20\d{6})", run_id)
-    folder = match.group(1) if match else "unknown_date"
-    return REPORT_DIR / folder
 
 
 def num(value: Any, default: float = 0.0) -> float:
@@ -121,12 +136,27 @@ def footer(canvas, doc) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run-dir", type=Path, default=DEFAULT_RUN_DIR)
-    parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument(
+        "--run-dir",
+        type=Path,
+        required=True,
+        help="Explicit completed run directory; latest/current inference is forbidden.",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        help="Explicit PDF path outside --run-dir.",
+    )
     parser.add_argument("--representative-agents", type=int, default=4)
     args = parser.parse_args()
 
-    run_dir = args.run_dir
+    run_dir = args.run_dir.resolve()
+    validation = require_publication_ready_run(run_dir)
+    if validation["community_mode"] != "on":
+        raise RuntimeError(
+            "Community report requires a publication-ready community-on run"
+        )
 
     font = register_font()
     styles = getSampleStyleSheet()
@@ -138,17 +168,22 @@ def main() -> None:
 
     meta = json.loads((run_dir / "run_metadata.json").read_text(encoding="utf-8"))
     run_id = str(meta.get("run_id") or run_dir.name)
-    output = args.output or report_dir_for_run(run_id) / f"{run_id}_community_report.pdf"
+    output = require_external_output(args.output, run_dir)
     output.parent.mkdir(parents=True, exist_ok=True)
     posts = read_csv(run_dir / "community_posts.csv")
     interactions = read_csv(run_dir / "community_interactions.csv")
+    reaction_rows = [row for row in interactions if is_reaction_row(row)]
     best_posts = read_csv(run_dir / "community_best_posts.csv")
-    logs = read_csv(run_dir / "community_logs.csv")
     selection_inputs = read_jsonl(run_dir / "community_selection_inputs.jsonl")
     agent_turns = read_jsonl(run_dir / "agent_turns.jsonl")
     portfolio_updates = read_jsonl(run_dir / "portfolio_updates.jsonl")
     order_rows = read_csv(run_dir / "submitted_orders.csv")
     fill_rows = read_csv(run_dir / "exchange_fills.csv")
+    exposure_summary = summarize_community_exposures(
+        interactions,
+        best_posts,
+        posts,
+    )
 
     # Chunked runs omit the legacy agent list from aggregate metadata.
     agent_ids = list(meta.get("agent_ids") or [])
@@ -162,12 +197,44 @@ def main() -> None:
         )
     meta["agent_ids"] = agent_ids
     meta.setdefault("agent_count", len(agent_ids))
+    trading_dates = [
+        str(value)
+        for value in (meta.get("trading_dates") or [])
+        if str(value)
+    ]
+    start_date = str(
+        meta.get("start_date")
+        or (trading_dates[0] if trading_dates else "-")
+    )
+    end_date = str(
+        meta.get("end_date")
+        or (trading_dates[-1] if trading_dates else "-")
+    )
+    date_count = int(
+        meta.get("date_count")
+        or len(trading_dates)
+        or len(
+            {
+                str(row.get("date"))
+                for row in agent_turns
+                if row.get("date")
+            }
+        )
+    )
+    lineage_summary = summarize_canonical_lineage(
+        run_dir,
+        metadata=meta,
+        agent_ids=agent_ids,
+        turn_rows=agent_turns,
+        community_posts=posts,
+    )
+    reasoning_summary = summarize_reasoning_off(run_dir, meta)
 
     posts_by_date = defaultdict(list)
     for row in posts:
         posts_by_date[row["date"]].append(row)
     interactions_by_date = defaultdict(list)
-    for row in interactions:
+    for row in reaction_rows:
         interactions_by_date[row["date"]].append(row)
     best_by_date = defaultdict(list)
     for row in best_posts:
@@ -182,9 +249,9 @@ def main() -> None:
             thinking_by_date[row["date"]].append((row["agent"]["agent_id"], thinking))
 
     reaction_counts_by_post = defaultdict(Counter)
-    for row in interactions:
+    for row in reaction_rows:
         if row.get("post_id"):
-            reaction_counts_by_post[str(row["post_id"])][row.get("reaction") or "read"] += 1
+            reaction_counts_by_post[str(row["post_id"])][row.get("reaction") or "none"] += 1
 
     final_states = latest_states(portfolio_updates)
     representative_agents, representative_reasons = pick_representative_agents(
@@ -200,23 +267,75 @@ def main() -> None:
 
     story: list[Any] = []
     story.append(para("TwinMarket Korea 커뮤니티 종토방 보고서", styles["KTitle"]))
-    story.append(para(f"실행 ID: {meta['run_id']} / 기간 {meta.get('start_date')}부터 {meta.get('date_count')}거래일 / Agent {meta.get('agent_count')}명", styles["KBody"]))
+    story.append(
+        para(
+            f"실행 ID: {meta['run_id']} / 기간 {start_date} ~ {end_date} "
+            f"({date_count}거래일) / Agent {meta.get('agent_count')}명",
+            styles["KBody"],
+        )
+    )
 
-    reactions = Counter(row.get("reaction") for row in interactions if row.get("reaction"))
+    reactions = Counter(row.get("reaction") for row in reaction_rows if row.get("reaction"))
     summary = [
         ["항목", "값"],
         ["게시글", f"{len(posts)}건"],
         ["선택 후보 화면", f"{len(selection_inputs)}건"],
-        ["읽기/반응", f"{len(interactions)}건 ({', '.join(f'{k}: {v}' for k, v in sorted(reactions.items()))})"],
+        ["후보 제목 노출", f"{exposure_summary['title_only_count']}건"],
+        [
+            "전체 full-body 노출",
+            (
+                f"{exposure_summary['full_body_count']}건 "
+                f"(PM 선택 {exposure_summary['pm_selected_full_body_count']}, "
+                f"Best AM {exposure_summary['best_full_body_delivery_count']}, "
+                f"선택 재전달 {exposure_summary['selected_full_body_replay_count']})"
+            ),
+        ],
+        ["PM 본문 읽기/반응", f"{len(reaction_rows)}건 ({', '.join(f'{k}: {v}' for k, v in sorted(reactions.items()))})"],
         ["Best 선정", f"{len(best_posts)}건"],
+        [
+            "Best 자기 글 제외",
+            (
+                f"기록 {exposure_summary['self_excluded_count']}건 / "
+                f"실제 자기 글 전달 위반 "
+                f"{exposure_summary['self_delivery_violation_count']}건"
+            ),
+        ],
+        [
+            "노출 provenance",
+            (
+                f"{exposure_summary['provenance_count']}건 / "
+                f"중복 {exposure_summary['duplicate_provenance_count']}건 / "
+                f"orphan {exposure_summary['orphan_exposure_count']}건 / "
+                f"title-only 본문 유출 "
+                f"{exposure_summary['title_only_body_leak_count']}건 / "
+                f"full-body 본문·hash 누락 "
+                f"{exposure_summary['missing_full_body_count']}/"
+                f"{exposure_summary['missing_body_hash_count']}건"
+            ),
+        ],
+        [
+            "게시글 계보",
+            (
+                f"{lineage_summary['community_post_linked_count']}/"
+                f"{lineage_summary['community_post_count']} "
+                "post-fill LTB/fill/decision 연결"
+            ),
+        ],
+        [
+            "Reasoning-off",
+            (
+                f"{reasoning_summary['status']} / "
+                f"provider returns {reasoning_summary['provider_return_count']}건"
+            ),
+        ],
         ["Community Thinking", f"{sum(len(v) for v in thinking_by_date.values())}건"],
         ["대표 에이전트", ", ".join(f"{agent_id} ({representative_reasons.get(agent_id, '')})" for agent_id in representative_agents)],
     ]
     story.append(table([[para(c, styles["KSmall"]) for c in row] for row in summary], [40 * mm, 130 * mm]))
 
     dates = sorted(set(posts_by_date) | set(interactions_by_date) | set(best_by_date) | selection_dates | set(thinking_by_date))
-    story.append(para("1. 커뮤니티 압력 요약", styles["KHeading1"]))
-    pressure_rows = [["일자", "게시/반응", "Best 신호", "읽기 반응", "분석"]]
+    story.append(para("1. 커뮤니티 노출·반응 요약", styles["KHeading1"]))
+    pressure_rows = [["일자", "게시/반응", "Best 게시글", "읽기 반응", "기술통계"]]
     for date in dates:
         day_posts = posts_by_date.get(date, [])
         day_interactions = interactions_by_date.get(date, [])
@@ -227,42 +346,49 @@ def main() -> None:
         unlike_count = day_reactions.get("unlike", 0)
         if like_count > unlike_count:
             read_signal = "동조 우위"
-            analysis = "커뮤니티 의견이 에이전트 판단을 강화하는 방향으로 작동했다."
+            analysis = "관찰된 반응에서 like가 unlike보다 많았다."
         elif unlike_count > like_count:
             read_signal = "반박 우위"
-            analysis = "노출은 있었지만 그대로 수용되기보다 경계/반대 반응이 더 컸다."
+            analysis = "관찰된 반응에서 unlike가 like보다 많았다."
         else:
             read_signal = "혼조"
-            analysis = "특정 방향으로 합의가 생기기보다 의견 탐색 기능이 컸다."
+            analysis = "like와 unlike만으로 뚜렷한 우위를 확인할 수 없다."
         pressure_rows.append(
             [
                 date,
                 f"게시 {len(day_posts)} / 반응 {len(day_interactions)}",
                 best_titles,
-                f"{read_signal}\nlike {like_count}, unlike {unlike_count}, read {day_reactions.get('read', 0)}",
+                f"{read_signal}\nlike {like_count}, unlike {unlike_count}, none {day_reactions.get('none', 0)}",
                 analysis,
             ]
         )
     story.append(table([[para(c, styles["KSmall"]) for c in row] for row in pressure_rows], [22 * mm, 27 * mm, 60 * mm, 31 * mm, 30 * mm]))
 
-    story.append(para("2. 영향력 큰 게시글", styles["KHeading1"]))
+    story.append(para("2. 기존 score 상위 게시글", styles["KHeading1"]))
+    story.append(
+        para(
+            "정렬에는 실험의 기존 Best 규칙인 score = like - unlike만 사용한다. "
+            "노출·반응만으로 거래 또는 belief에 인과적 영향을 주었다고 판단하지 않는다.",
+            styles["KBody"],
+        )
+    )
     post_rows = [["post_id", "일자", "작성자/유형", "제목", "반응", "해석"]]
     ranked_posts = []
     for row in posts:
         post_id = str(row.get("post_id") or "")
         reactions_for_post = reaction_counts_by_post.get(post_id) or Counter()
         best_rank = min((num(best.get("rank"), 99) for best in best_posts if str(best.get("post_id")) == post_id), default=99)
-        score = reactions_for_post.get("like", 0) * 2 + reactions_for_post.get("read", 0) - reactions_for_post.get("unlike", 0) + max(0, 6 - best_rank)
+        score = reactions_for_post.get("like", 0) - reactions_for_post.get("unlike", 0)
         ranked_posts.append((score, row, reactions_for_post, best_rank))
     for score, row, reactions_for_post, best_rank in sorted(ranked_posts, key=lambda item: item[0], reverse=True)[:10]:
         like_count = reactions_for_post.get("like", 0)
         unlike_count = reactions_for_post.get("unlike", 0)
         if best_rank < 99 and like_count >= unlike_count:
-            interpretation = "상위 노출과 동조 반응이 겹쳐 커뮤니티 신호로 작동했다."
+            interpretation = "기존 score 순위에서 Best에 포함됐고 like가 unlike 이상이다."
         elif unlike_count > like_count:
-            interpretation = "노출은 컸지만 반대 반응이 많아 역신호로 해석될 수 있다."
+            interpretation = "관찰된 반응에서 unlike가 like보다 많다."
         else:
-            interpretation = "읽힌 정도는 있으나 방향성은 제한적이다."
+            interpretation = "반응 집계만으로 후속 거래 방향은 판단할 수 없다."
         reaction_text = ", ".join(f"{key} {value}" for key, value in sorted(reactions_for_post.items())) or "-"
         post_rows.append(
             [
@@ -279,7 +405,7 @@ def main() -> None:
     story.append(para("3. 대표 에이전트 반응 패턴", styles["KHeading1"]))
     agent_rows = [["Agent", "선정 기준", "읽은 글/반응", "주요 수용 또는 반박", "해석"]]
     for agent_id in representative_agents:
-        rows = [row for row in interactions if row.get("agent_id") == agent_id]
+        rows = [row for row in reaction_rows if row.get("agent_id") == agent_id]
         reactions_for_agent = Counter(row.get("reaction") for row in rows if row.get("reaction"))
         notable = sorted(
             rows,
@@ -288,11 +414,11 @@ def main() -> None:
         )[:3]
         titles = "\n".join(f"{row.get('reaction')}: {short(row.get('title'), 70)}" for row in notable) or "-"
         if reactions_for_agent.get("like", 0) > reactions_for_agent.get("unlike", 0):
-            interpretation = "커뮤니티 의견을 판단 강화 재료로 사용한 성향이 강하다."
+            interpretation = "이 에이전트의 관찰 반응은 like가 더 많았다."
         elif reactions_for_agent.get("unlike", 0) > reactions_for_agent.get("like", 0):
-            interpretation = "커뮤니티를 반대 검증 장치로 활용한 성향이 강하다."
+            interpretation = "이 에이전트의 관찰 반응은 unlike가 더 많았다."
         else:
-            interpretation = "읽기는 했지만 특정 방향으로 기울지 않았다."
+            interpretation = "관찰 반응 수만으로 뚜렷한 방향을 말하기 어렵다."
         agent_rows.append(
             [
                 agent_id,
@@ -315,11 +441,11 @@ def main() -> None:
     for date, agent_id, thinking in thinking_items:
         lower = str(thinking)
         if "반대" in lower or "경계" in lower or "위험" in lower:
-            point = "커뮤니티 의견을 그대로 따르지 않고 리스크 필터로 사용했다."
+            point = "기록된 해석 문장에 반대·경계·위험 표현이 포함됐다."
         elif "공감" in lower or "반영" in lower:
-            point = "커뮤니티 의견이 다음 투자 판단에 반영될 가능성이 높다."
+            point = "기록된 해석 문장에 공감·반영 표현이 포함됐다."
         else:
-            point = "탐색적 읽기에 가까워 직접 영향은 제한적이다."
+            point = "키워드만으로 후속 STB·거래 반영 여부를 판단하지 않는다."
         thinking_rows.append([date, agent_id, short(thinking, 360), point])
     if len(thinking_rows) == 1:
         thinking_rows.append(["-", "-", "대표 에이전트의 Community Thinking 로그가 없습니다.", "-"])

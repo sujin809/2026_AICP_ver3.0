@@ -18,6 +18,38 @@ class LLMValidationError(RuntimeError):
     """A model response was received but did not satisfy the experiment schema."""
 
 
+# 재시도는 온도를 올려 가며 표본을 벌린다.
+#
+# v9까지 모든 stage가 "1회차만 높고 나머지 재시도는 전부 낮은 고정 온도"였다.
+# 같은 오류가 반복되면 재시도 프롬프트도 글자까지 같으므로, 같은 입력 + 같은 낮은
+# 온도 = 같은 출력이 되어 10회 예산이 실제로는 2회였다. 2026-03-04/PM에서 한
+# agent가 attempt 2~10에 걸쳐 응답 해시가 아홉 번 동일했다(고정점). 안내문을
+# 아무리 정확히 써도 고정점에서는 빠져나올 수 없다.
+#
+# 검증 통과 기준은 조금도 완화하지 않는다. 바꾸는 것은 표본 분산뿐이다.
+# 실측: 위 고착 호출을 이 스케줄로 재현하니 attempt 4(T=0.6)에서 탈출했다.
+_RETRY_TEMPERATURE_RAMP = (0.30, 0.45, 0.60, 0.75, 0.90, 1.00)
+
+
+def retry_temperature_schedule(
+    first_temperature: float,
+    validation_attempts: int,
+) -> list[float]:
+    """1회차는 stage가 정한 온도를 쓰고, 재시도는 1.0까지 단계적으로 올린다.
+
+    1회차 온도는 바꾸지 않으므로 첫 시도에 통과하는 대다수 호출은 영향이 없다.
+    """
+
+    if validation_attempts < 1:
+        raise ValueError("validation_attempts must be at least 1")
+    first = float(first_temperature)
+    ramp = [value for value in _RETRY_TEMPERATURE_RAMP if value > first] or [1.0]
+    schedule = [first]
+    for index in range(validation_attempts - 1):
+        schedule.append(ramp[min(index, len(ramp) - 1)])
+    return schedule
+
+
 def build_validation_retry_prompt(
     original_prompt: str,
     *,
